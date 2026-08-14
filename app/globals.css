@@ -104,6 +104,15 @@ select:focus,input:focus { border-color:var(--yellow); }
 .backup-downloads b { color:#8dddb7; font-size:10px; }
 .backup-downloads small { color:#788b81; font-size:9px; margin:4px 0 9px; }
 .backup-downloads button { display:block; width:100%; text-align:left; margin-top:5px; padding:8px; border:1px solid #2a4938; color:#b5e8ce; background:#14231b; font:9px var(--font-geist-mono); }
+.restore-button { color:#9fc3ef; background:#121b24; border:1px solid #30465c; }
+.restore-review { margin-top:10px; padding:13px; border:1px solid #3d5873; background:#101820; }
+.restore-review>b { color:#9fc3ef; font-size:10px; }
+.restore-review p { color:#91a2b5; font-size:9px; line-height:1.5; overflow-wrap:anywhere; }
+.restore-review>div { display:flex; gap:6px; margin-top:9px; }
+.restore-review button { flex:1; padding:8px; border:1px solid #3d5369; color:#aabed2; background:transparent; font:9px var(--font-geist-mono); }
+.restore-review .confirm-restore { color:#0d1720; background:#8dbdff; border-color:#8dbdff; font-weight:800; }
+.restore-progress { height:4px; margin-top:8px; background:#0c0f12; overflow:hidden; }
+.restore-progress i { display:block; height:100%; background:#8dbdff; transition:width .18s ease; }
 .write-button { background:#ffd84a; color:#161712; border:1px solid #ffd84a; font-weight:800; }
 .write-review { margin-top:10px; padding:14px; border:1px solid #796a27; background:#1d1b10; }
 .write-review>b { color:#ffd84a; font-size:11px; }
@@ -177,7 +186,7 @@ select,input { margin-top:4px; padding:7px; }
 .module-silhouette { display:none; }
 dl div { grid-template-columns:67px 1fr; padding:5px 0; font-size:8px; }
 .flash-lock { margin-top:7px; padding:8px; }
-.backup-downloads,.write-review,.recovery-review { padding:9px; }
+.backup-downloads,.write-review,.restore-review,.recovery-review { padding:9px; }
 .emergency-tools { margin-top:9px; border-top:1px solid #34302d; }
 .emergency-tools summary { padding:8px 0 2px; cursor:pointer; color:#a98975; font:8px var(--font-geist-mono); text-transform:uppercase; letter-spacing:.08em; }
 .emergency-tools summary::marker { color:#a98975; }

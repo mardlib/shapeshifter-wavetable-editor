@@ -37,6 +37,12 @@ type FlashBackup = {
   created: string;
 };
 
+type RestoreBackup = FlashBackup & {
+  bankSlot: number;
+  bankName: string;
+  filename: string;
+};
+
 type ImportMode = "extract" | "spread";
 
 const USB_BLASTER_VENDOR = 0x09fb;
@@ -66,6 +72,47 @@ function packBackup(backup: FlashBackup, bankSlot: number) {
   packed.set(backup.names, header.length);
   packed.set(backup.waves, header.length + backup.names.length);
   return packed;
+}
+
+function unpackBackup(bytes: Uint8Array, filename: string): RestoreBackup {
+  const headerSize = 32;
+  const sectorSize = 0x10000;
+  if (bytes.length < headerSize) throw new Error("Rejected: the backup file is incomplete.");
+  if (new TextDecoder().decode(bytes.subarray(0, 8)) !== "WAVEPORT") {
+    throw new Error("Rejected: this is not a WavePort bank backup.");
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const version = view.getUint8(8);
+  const waveSector = view.getUint8(9);
+  const bankNumber = view.getUint16(10, true);
+  const namesLength = view.getUint32(12, true);
+  const wavesLength = view.getUint32(16, true);
+  if (version !== 1) throw new Error(`Rejected: unsupported backup version ${version}.`);
+  if (bankNumber < 1 || bankNumber > BANK_COUNT) throw new Error("Rejected: invalid bank number in backup.");
+  const bankSlot = bankNumber - 1;
+  const expectedSector = 16 + Math.floor(bankSlot / 8);
+  if (waveSector !== expectedSector || waveSector < 16 || waveSector > 31) {
+    throw new Error("Rejected: the bank and wave-sector information do not match.");
+  }
+  if (namesLength !== sectorSize || wavesLength !== sectorSize) {
+    throw new Error("Rejected: backup sectors have the wrong size.");
+  }
+  if (bytes.length !== headerSize + namesLength + wavesLength) {
+    throw new Error("Rejected: the backup file size does not match its header.");
+  }
+  const names = bytes.slice(headerSize, headerSize + namesLength);
+  const waves = bytes.slice(headerSize + namesLength);
+  const nameOffset = bankSlot * 8;
+  const bankName = String.fromCharCode(...names.subarray(nameOffset, nameOffset + 8)).trim() || "unnamed";
+  return {
+    names,
+    waves,
+    waveSector,
+    bankSlot,
+    bankName,
+    filename,
+    created: new Date().toISOString().replace(/[:.]/g, "-"),
+  };
 }
 
 function WaveCanvas({ wave, active, onClick }: { wave: Float32Array; active: boolean; onClick: () => void }) {
@@ -120,9 +167,13 @@ export default function ShapeshifterStudio() {
   const [recoveryReviewOpen, setRecoveryReviewOpen] = useState(false);
   const [recoveryConfirmation, setRecoveryConfirmation] = useState("");
   const [recoveryProgress, setRecoveryProgress] = useState(0);
+  const [restoreBackup, setRestoreBackup] = useState<RestoreBackup | null>(null);
+  const [restoreConfirmation, setRestoreConfirmation] = useState("");
+  const [restoreProgress, setRestoreProgress] = useState(0);
   const [webUsbAvailable, setWebUsbAvailable] = useState(false);
   const audioInput = useRef<HTMLInputElement>(null);
   const firmwareInput = useRef<HTMLInputElement>(null);
+  const restoreInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const available = "usb" in navigator;
@@ -403,6 +454,118 @@ export default function ShapeshifterStudio() {
       setStatus(`Safety backup for bank ${bankSlot + 1} completed. Download and keep the backup file.`);
     } catch (error) {
       setUsbError(error instanceof Error ? error.message : "Safety backup failed.");
+    } finally {
+      if (bridgeLoaded && jtag) {
+        try { await jtag.restartFromFlash(); } catch {}
+      }
+      try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
+      try { if (device?.opened) await device.close(); } catch {}
+      setJtagBusy(false);
+    }
+  }
+
+  async function loadRestoreBackup(file: File) {
+    setUsbError("");
+    try {
+      const parsed = unpackBackup(new Uint8Array(await file.arrayBuffer()), file.name);
+      setRestoreBackup(parsed);
+      setRestoreConfirmation("");
+      setRestoreProgress(0);
+      setBankSlot(parsed.bankSlot);
+      setBackup(null);
+      setWriteReviewOpen(false);
+      setStatus(`Backup validated: bank ${parsed.bankSlot + 1} “${parsed.bankName}”. Review the restore details before writing.`);
+    } catch (error) {
+      setRestoreBackup(null);
+      setRestoreConfirmation("");
+      setUsbError(error instanceof Error ? error.message : "The backup file could not be read.");
+    }
+  }
+
+  async function restoreBankBackup() {
+    if (!restoreBackup) return;
+    const restoreSlot = restoreBackup.bankSlot;
+    const waveAddress = restoreBackup.waveSector * 0x10000;
+    const waveOffset = (restoreSlot % 8) * 0x2000;
+    const nameOffset = restoreSlot * 8;
+    setUsbError("");
+    setJtagBusy(true);
+    setRestoreProgress(0);
+    let device: any = null;
+    let interfaceNumber = 0;
+    let jtag: UsbBlasterJtag | null = null;
+    let bridgeLoaded = false;
+    let currentNames: Uint8Array | null = null;
+    let currentWaves: Uint8Array | null = null;
+    let wavesTouched = false;
+    let namesTouched = false;
+    try {
+      const session = await openJtagSession();
+      ({ device, interfaceNumber, jtag } = session);
+      await jtag.readIdCode();
+      const id = await jtag.readIdCode();
+      if (!expectedShapeshifter(id)) throw new Error("Restore canceled: the connected device is not a supported Shapeshifter.");
+
+      setStatus("Preparing the Shapeshifter for bank restore …");
+      const response = await fetch(new URL("bridges/spiOverJtag_ep4ce2217.rbf", document.baseURI));
+      if (!response.ok) throw new Error("The restore service could not be prepared.");
+      await jtag.loadSpiBridge(new Uint8Array(await response.arrayBuffer()), (fraction) => setRestoreProgress(fraction * 15));
+      bridgeLoaded = true;
+      const siliconId = await jtag.readEpcsSiliconId();
+      if (siliconId !== 0x14) throw new Error(`Restore canceled: unexpected flash ID 0x${siliconId.toString(16).padStart(2, "0")}.`);
+
+      setStatus("Reading the current bank data before restore …");
+      currentNames = await jtag.readFlash(0x0f0000, 0x10000, (fraction) => setRestoreProgress(15 + fraction * 7));
+      currentWaves = await jtag.readFlash(waveAddress, 0x10000, (fraction) => setRestoreProgress(22 + fraction * 8));
+      const targetNames = new Uint8Array(currentNames);
+      const targetWaves = new Uint8Array(currentWaves);
+      targetNames.set(restoreBackup.names.subarray(nameOffset, nameOffset + 8), nameOffset);
+      targetWaves.set(restoreBackup.waves.subarray(waveOffset, waveOffset + 0x2000), waveOffset);
+
+      if (!equalBytes(currentWaves, targetWaves)) {
+        setStatus(`Restoring and checking bank ${restoreSlot + 1} …`);
+        wavesTouched = true;
+        await jtag.writeFlashSector(waveAddress, targetWaves, (fraction) => setRestoreProgress(30 + fraction * 32));
+        if (!equalBytes(await jtag.readFlash(waveAddress, 0x10000, (fraction) => setRestoreProgress(62 + fraction * 12)), targetWaves)) {
+          throw new Error(`Bank ${restoreSlot + 1} did not verify correctly after restoring.`);
+        }
+      }
+
+      if (!equalBytes(currentNames, targetNames)) {
+        setStatus("Restoring and checking the bank name …");
+        namesTouched = true;
+        await jtag.writeFlashSector(0x0f0000, targetNames, (fraction) => setRestoreProgress(74 + fraction * 16));
+        if (!equalBytes(await jtag.readFlash(0x0f0000, 0x10000, (fraction) => setRestoreProgress(90 + fraction * 8)), targetNames)) {
+          throw new Error("The restored bank name did not verify correctly.");
+        }
+      }
+
+      await jtag.restartFromFlash();
+      bridgeLoaded = false;
+      setRestoreProgress(100);
+      setBackup({ names: targetNames, waves: targetWaves, waveSector: restoreBackup.waveSector, created: new Date().toISOString().replace(/[:.]/g, "-") });
+      setRestoreBackup(null);
+      setRestoreConfirmation("");
+      setStatus(`Success: bank ${restoreSlot + 1} “${restoreBackup.bankName}” was restored and verified. Other banks were left unchanged.`);
+    } catch (error) {
+      let message = error instanceof Error ? error.message : "Bank restore failed.";
+      if (bridgeLoaded && jtag && currentNames && currentWaves && (wavesTouched || namesTouched)) {
+        try {
+          setStatus("Restore error — returning affected sectors to their previous state …");
+          if (wavesTouched) {
+            await jtag.writeFlashSector(waveAddress, currentWaves);
+            if (!equalBytes(await jtag.readFlash(waveAddress, 0x10000), currentWaves)) throw new Error("The previous wave sector could not be verified.");
+          }
+          if (namesTouched) {
+            await jtag.writeFlashSector(0x0f0000, currentNames);
+            if (!equalBytes(await jtag.readFlash(0x0f0000, 0x10000), currentNames)) throw new Error("The previous name sector could not be verified.");
+          }
+          message += " The affected sectors were returned to their previous state and verified.";
+        } catch (rollbackError) {
+          message += ` WARNING: rollback failed: ${rollbackError instanceof Error ? rollbackError.message : "unknown error"}`;
+        }
+      }
+      setUsbError(message);
     } finally {
       if (bridgeLoaded && jtag) {
         try { await jtag.restartFromFlash(); } catch {}
@@ -699,13 +862,26 @@ export default function ShapeshifterStudio() {
           <button className="wide connect" type="button" onClick={connectUsb}>{usb ? "Shapeshifter" : "Connect Shapeshifter"}</button>
           {usb && <button className="wide jtag-button" type="button" disabled={jtagBusy} onClick={scanJtagId}>{jtagBusy ? "Checking connection …" : jtagId ? "✓ Shapeshifter verified" : "Check Shapeshifter"}</button>}
           <div className={`flash-lock ${jtagId ? "passed" : ""}`}><span>{jtagId ? "✓" : "⌁"}</span><div><b>{jtagId ? "Shapeshifter verified" : "Writing unavailable"}</b><small>{jtagId ? "Next, create a safety backup." : "Check the Shapeshifter before continuing."}</small></div></div>
-          {jtagId && <button className="wide backup-button" type="button" disabled={jtagBusy} onClick={createFlashBackup}>{jtagBusy ? `Creating backup … ${Math.round(backupProgress)} %` : backup ? "✓ Create a new safety backup" : "Create safety backup"}</button>}
-          {jtagBusy && <div className="backup-progress" aria-label={`Backup ${Math.round(backupProgress)} percent`}><i style={{ width: `${backupProgress}%` }} /></div>}
+          {jtagId && <button className="wide backup-button" type="button" disabled={jtagBusy} onClick={createFlashBackup}>{jtagBusy ? "Shapeshifter busy …" : backup ? "✓ Create a new safety backup" : "Create safety backup"}</button>}
+          {jtagBusy && backupProgress > 0 && backupProgress < 100 && <div className="backup-progress" aria-label={`Backup ${Math.round(backupProgress)} percent`}><i style={{ width: `${backupProgress}%` }} /></div>}
           {backup && <div className="backup-downloads">
             <b>Bank {bankSlot + 1} safety backup ready</b>
             <small>Keep this file until the new bank has been tested.</small>
             <button type="button" onClick={() => download(packBackup(backup, bankSlot), `waveport-bank-${bankSlot + 1}-${backup.created}.backup`)}>Download bank {bankSlot + 1} backup ↓</button>
           </div>}
+          <input ref={restoreInput} type="file" accept=".backup,application/octet-stream" hidden onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void loadRestoreBackup(file);
+          }} />
+          {jtagId && <button className="wide restore-button" type="button" disabled={jtagBusy} onClick={() => restoreInput.current?.click()}>Restore a downloaded bank backup</button>}
+          {restoreBackup && <div className="restore-review">
+            <b>Restore bank {restoreBackup.bankSlot + 1} “{restoreBackup.bankName}”</b>
+            <p>File: {restoreBackup.filename}. Only bank {restoreBackup.bankSlot + 1} and its display name will be restored. The other seven banks in the same flash sector and all other names will remain unchanged.</p>
+            <label>Type exactly to unlock<input value={restoreConfirmation} onChange={(event) => setRestoreConfirmation(event.target.value)} placeholder={`RESTORE BANK ${restoreBackup.bankSlot + 1}`} autoComplete="off" /></label>
+            <div><button type="button" onClick={() => { setRestoreBackup(null); setRestoreConfirmation(""); }}>Cancel</button><button className="confirm-restore" type="button" disabled={jtagBusy || restoreConfirmation !== `RESTORE BANK ${restoreBackup.bankSlot + 1}`} onClick={restoreBankBackup}>Restore now</button></div>
+          </div>}
+          {restoreProgress > 0 && restoreProgress < 100 && <div className="restore-progress" aria-label={`Restoring ${Math.round(restoreProgress)} percent`}><i style={{ width: `${restoreProgress}%` }} /></div>}
           {backup && !writeReviewOpen && <button className="wide write-button" type="button" disabled={jtagBusy} onClick={() => { setWriteConfirmation(""); setWriteReviewOpen(true); }}>{jtagBusy && writeProgress > 0 ? `Writing / verify … ${Math.round(writeProgress)} %` : `Write bank ${bankSlot + 1} safely`}</button>}
           {backup && writeReviewOpen && <div className="write-review">
             <b>Final confirmation</b>

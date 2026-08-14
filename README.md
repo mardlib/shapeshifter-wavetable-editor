@@ -26,6 +26,8 @@ does not require a firmware image or a platform-specific application.
 - Preview all eight waves and choose any of the 128 bank slots.
 - Connect to the Shapeshifter from Chrome or Edge on macOS, Windows, or Linux.
 - Create one downloadable safety-backup file for the selected bank.
+- Restore a downloaded bank backup in a later session without changing the
+  other seven banks stored in the same flash sector.
 - Write and verify the selected bank, with automatic in-session rollback if a
   write check fails.
 - Access full-firmware recovery tools in a deliberately collapsed emergency
@@ -56,7 +58,10 @@ tool.
 
 The downloadable `.backup` file contains the original bank-name data and the
 complete eight-bank flash block containing the selected bank. Keep it until the
-new bank has been tested.
+new bank has been tested. To restore it later, verify the Shapeshifter, choose
+**Restore a downloaded bank backup**, load the file, and enter the displayed
+confirmation phrase. The restore process copies only the bank and name recorded
+in the file, verifies both, and leaves neighboring banks unchanged.
 
 ## Local development
 
