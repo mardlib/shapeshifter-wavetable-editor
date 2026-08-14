@@ -1,64 +1,10 @@
-export const FIRMWARE_SIZE = 2 * 1024 * 1024;
 export const BANK_COUNT = 128;
 export const WAVES_PER_BANK = 8;
 export const SAMPLES_PER_WAVE = 512;
 export const BYTES_PER_SAMPLE = 2;
 export const BANK_BYTES = WAVES_PER_BANK * SAMPLES_PER_WAVE * BYTES_PER_SAMPLE;
-export const NAME_BASE = 0x0f0000;
-export const WAVE_BASE = 0x100000;
 
 export type WaveBank = Float32Array[];
-
-export type FirmwareImage = {
-  bytes: Uint8Array;
-  format: "BIN" | "JIC";
-};
-
-function containsAscii(source: Uint8Array, text: string, end = source.length): boolean {
-  const needle = new TextEncoder().encode(text);
-  const limit = Math.min(end, source.length) - needle.length;
-  for (let offset = 0; offset <= limit; offset++) {
-    let matches = true;
-    for (let index = 0; index < needle.length; index++) {
-      if (source[offset + index] !== needle[index]) { matches = false; break; }
-    }
-    if (matches) return true;
-  }
-  return false;
-}
-
-export function extractFirmwareImage(source: Uint8Array): FirmwareImage {
-  if (source.byteLength === FIRMWARE_SIZE) {
-    return { bytes: new Uint8Array(source), format: "BIN" };
-  }
-
-  const headerLimit = Math.min(512, source.length);
-  const isJic = source.length > FIRMWARE_SIZE
-    && source[0] === 0x4a && source[1] === 0x49 && source[2] === 0x43 && source[3] === 0x00;
-  if (!isJic) throw new Error("Expected an exact 2 MB .bin or a Shapeshifter EPCS16 .jic file.");
-  if (!containsAscii(source, "Quartus", headerLimit)
-    || !containsAscii(source, "EP4CE22", headerLimit)
-    || !containsAscii(source, "EPCS16", headerLimit)) {
-    throw new Error("Rejected: the JIC file does not identify a Shapeshifter-compatible EP4CE22 and EPCS16.");
-  }
-
-  const view = new DataView(source.buffer, source.byteOffset, source.byteLength);
-  let imageStart = -1;
-  for (let offset = 0; offset + 18 <= headerLimit; offset++) {
-    if (view.getUint16(offset, true) !== 0x001c) continue;
-    if (view.getUint32(offset + 2, true) !== FIRMWARE_SIZE + 12) continue;
-    imageStart = offset + 18;
-    break;
-  }
-  if (imageStart < 0 || imageStart + FIRMWARE_SIZE > source.length) {
-    throw new Error("Rejected: the JIC does not contain one complete 2 MB EPCS16 image.");
-  }
-  const footer = imageStart + FIRMWARE_SIZE;
-  if (footer + 2 > source.length || view.getUint16(footer, true) !== 0x001e) {
-    throw new Error("Rejected: the JIC payload boundary could not be verified.");
-  }
-  return { bytes: source.slice(imageStart, imageStart + FIRMWARE_SIZE), format: "JIC" };
-}
 
 export function makeStarterBank(): WaveBank {
   const makers = [
@@ -233,38 +179,4 @@ export function bankToRaw(bank: WaveBank): Uint8Array {
     }
   }
   return bytes;
-}
-
-export function patchFirmware(
-  source: Uint8Array,
-  bank: WaveBank,
-  bankIndex: number,
-  bankName: string,
-): Uint8Array {
-  if (source.byteLength !== FIRMWARE_SIZE) {
-    throw new Error(`Firmware must be exactly ${FIRMWARE_SIZE.toLocaleString("en-US")} bytes.`);
-  }
-  if (!Number.isInteger(bankIndex) || bankIndex < 0 || bankIndex >= BANK_COUNT) {
-    throw new Error("Invalid bank slot.");
-  }
-  const output = new Uint8Array(source);
-  output.set(bankToRaw(bank), WAVE_BASE + bankIndex * BANK_BYTES);
-
-  const safeName = bankName.toUpperCase().replace(/[^A-Z0-9 _-]/g, "").slice(0, 6).padEnd(6, " ");
-  const displayName = `  ${safeName}`;
-  for (let i = 0; i < 8; i++) output[NAME_BASE + bankIndex * 8 + i] = displayName.charCodeAt(i);
-  return output;
-}
-
-export function readBankName(source: Uint8Array, bankIndex: number): string {
-  if (source.byteLength !== FIRMWARE_SIZE) return "";
-  const start = NAME_BASE + bankIndex * 8;
-  return String.fromCharCode(...source.slice(start, start + 8)).trim();
-}
-
-export function changedByteCount(before: Uint8Array, after: Uint8Array): number {
-  if (before.length !== after.length) return -1;
-  let changed = 0;
-  for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) changed++;
-  return changed;
 }

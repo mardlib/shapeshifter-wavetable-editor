@@ -3,19 +3,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- WebUSB is not part of the standard TypeScript DOM declarations. */
 /* eslint-disable no-empty -- USB cleanup is deliberately best-effort. */
 
-import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import {
   BANK_COUNT,
   WaveBank,
   audioToBank,
   bankToRaw,
-  changedByteCount,
-  extractFirmwareImage,
   extractSequentialWaves,
   generateRandomBank,
   makeStarterBank,
-  patchFirmware,
-  readBankName,
   singleCycleToBank,
   singleCycleToWave,
 } from "./shapeshifter-core";
@@ -148,10 +144,6 @@ export default function ShapeshifterStudio() {
   const [selectedWave, setSelectedWave] = useState(0);
   const [bankSlot, setBankSlot] = useState(120);
   const [bankName, setBankName] = useState("MYWAVE");
-  const [firmware, setFirmware] = useState<Uint8Array | null>(null);
-  const [firmwareName, setFirmwareName] = useState("");
-  const [firmwareFormat, setFirmwareFormat] = useState<"BIN" | "JIC" | "">("");
-  const [patched, setPatched] = useState<Uint8Array | null>(null);
   const [audioName, setAudioName] = useState("Starter Waves");
   const [status, setStatus] = useState("Ready. Files never leave your browser.");
   const [usb, setUsb] = useState<UsbSummary | null>(null);
@@ -170,7 +162,6 @@ export default function ShapeshifterStudio() {
   const [restoreProgress, setRestoreProgress] = useState(0);
   const [webUsbAvailable, setWebUsbAvailable] = useState(false);
   const audioInput = useRef<HTMLInputElement>(null);
-  const firmwareInput = useRef<HTMLInputElement>(null);
   const restoreInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -200,11 +191,6 @@ export default function ShapeshifterStudio() {
     });
   }, []);
 
-  const changed = useMemo(
-    () => (firmware && patched ? changedByteCount(firmware, patched) : 0),
-    [firmware, patched],
-  );
-
   async function loadAudioFile(file: File) {
     try {
       const context = new AudioContext();
@@ -224,7 +210,6 @@ export default function ShapeshifterStudio() {
         setBank(audioToBank(mono));
       }
       setAudioName(file.name);
-      setPatched(null);
       setStatus(singleCycle
         ? `${file.name}: single cycle with ${mono.length} samples detected, periodically resampled to 512 samples and placed in all 8 waves.`
         : importMode === "extract"
@@ -239,11 +224,10 @@ export default function ShapeshifterStudio() {
   function makeRandomBank() {
     setBank(generateRandomBank());
     setSelectedWave(0);
-    setAudioName("Wild Random Bank");
-    setPatched(null);
+    setAudioName("Random Wavetable Set");
     setBackup(null);
     setWriteReviewOpen(false);
-    setStatus("Generated a wild random bank: 8 evolving waves with moving formants, phase warping, drive, and wave folding.");
+    setStatus("Generated a random wavetable set: 8 evolving waves with moving formants, phase warping, drive, and wave folding.");
   }
 
   async function loadAudioFiles(files: File[]) {
@@ -258,7 +242,6 @@ export default function ShapeshifterStudio() {
       setBank((current) => current.map((wave, index) => waves[index] ?? wave));
       setSelectedWave(0);
       setAudioName(`${waves.length} Single Cycles · ${ordered[0].name} …`);
-      setPatched(null);
       setBackup(null);
       setWriteReviewOpen(false);
       setStatus(`${waves.length} single-cycle files sorted numerically and placed on W1–W${waves.length}.`);
@@ -292,7 +275,6 @@ export default function ShapeshifterStudio() {
       setBank((current) => current.map((wave, waveIndex) => replacements[waveIndex - index] ?? wave));
       setSelectedWave(index);
       setAudioName(`Custom Bank · ${ordered.length} Cycle${ordered.length === 1 ? "" : "s"} from W${index + 1}`);
-      setPatched(null);
       setBackup(null);
       setWriteReviewOpen(false);
       setStatus(`${ordered.length} single cycle${ordered.length === 1 ? "" : "s"} placed on W${index + 1}–W${index + replacements.length} and resampled to 512 samples each.`);
@@ -300,37 +282,6 @@ export default function ShapeshifterStudio() {
       setStatus(error instanceof Error ? error.message : "The single-cycle file could not be read.");
     } finally {
       setWaveDropTarget(null);
-    }
-  }
-
-  async function loadFirmwareFile(file: File) {
-    try {
-      const result = extractFirmwareImage(new Uint8Array(await file.arrayBuffer()));
-      setFirmware(result.bytes);
-      setFirmwareName(file.name);
-      setFirmwareFormat(result.format);
-      setPatched(null);
-      const existing = readBankName(result.bytes, bankSlot);
-      setStatus(result.format === "JIC"
-        ? `Shapeshifter JIC validated and its 2 MB EPCS16 image extracted. Slot ${bankSlot + 1} is named “${existing || "empty"}”.`
-        : `Raw 2 MB firmware validated. Slot ${bankSlot + 1} is named “${existing || "empty"}”.`);
-    } catch (error) {
-      setFirmware(null);
-      setFirmwareName("");
-      setFirmwareFormat("");
-      setPatched(null);
-      setStatus(error instanceof Error ? `Rejected: ${file.name}. ${error.message}` : "The recovery image could not be read.");
-    }
-  }
-
-  function applyPatch() {
-    if (!firmware) return;
-    try {
-      const result = patchFirmware(firmware, bank, bankSlot, bankName);
-      setPatched(result);
-      setStatus(`Created a new firmware image. Only slot ${bankSlot + 1} and its name were replaced.`);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Patch failed.");
     }
   }
 
@@ -579,28 +530,6 @@ export default function ShapeshifterStudio() {
     }
   }
 
-  async function restartModule() {
-    setUsbError("");
-    setJtagBusy(true);
-    let device: any = null;
-    let interfaceNumber = 0;
-    try {
-      const session = await openJtagSession();
-      ({ device, interfaceNumber } = session);
-      await session.jtag.restartFromFlash();
-      setJtagId("");
-      setBackup(null);
-      setBackupProgress(0);
-      setStatus("The Shapeshifter restarted from the unchanged flash firmware.");
-    } catch (error) {
-      setUsbError(error instanceof Error ? error.message : "Restart failed.");
-    } finally {
-      try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
-      try { if (device?.opened) await device.close(); } catch {}
-      setJtagBusy(false);
-    }
-  }
-
   function equalBytes(a: Uint8Array, b: Uint8Array) {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
@@ -745,7 +674,7 @@ export default function ShapeshifterStudio() {
             <span>LONG FILE</span>
             <button type="button" className={importMode === "extract" ? "active" : ""} onClick={() => setImportMode("extract")}>Extract 512-sample windows</button>
             <button type="button" className={importMode === "spread" ? "active" : ""} onClick={() => setImportMode("spread")}>Distribute entire file</button>
-            <button className="random-bank-button" type="button" onClick={makeRandomBank}>↻ Generate Wild Bank</button>
+            <button className="random-bank-button" type="button" onClick={makeRandomBank}>↻ Generate Wavetable Set</button>
           </div>
 
           <div className="wave-grid">
@@ -827,21 +756,6 @@ export default function ShapeshifterStudio() {
           {writeProgress > 0 && writeProgress < 100 && <div className="write-progress" aria-label={`Writing ${Math.round(writeProgress)} percent`}><i style={{ width: `${writeProgress}%` }} /></div>}
         </div>
         <div className="status-line" aria-live="polite"><span />{status}</div>
-        <details className="emergency-tools">
-          <summary>Emergency firmware tools</summary>
-          <div className="emergency-body">
-            <p>Not required for normal bank writes. This section only creates a patched firmware copy for use with an external programmer; it never writes full firmware to the module.</p>
-            {usb && <button className="wide restart-button" type="button" disabled={jtagBusy} onClick={restartModule}>Restart module from flash</button>}
-            <div className={`firmware-state ${firmware ? "valid" : ""}`}>
-              <span>{firmware ? "✓" : "FW"}</span>
-              <div><b>{firmware ? firmwareName : "Load recovery .bin or .jic"}</b><small>{firmware ? `${firmwareFormat} · 2,097,152-byte image validated` : "Raw 2 MB BIN or Shapeshifter EPCS16 JIC"}</small></div>
-            </div>
-            <input ref={firmwareInput} type="file" accept=".bin,.jic,application/octet-stream" hidden onChange={(event) => event.target.files?.[0] && void loadFirmwareFile(event.target.files[0])} />
-            <button className="wide secondary" type="button" onClick={() => firmwareInput.current?.click()}>{firmware ? "Choose different image" : "Choose recovery image"}</button>
-            <button className="wide primary" type="button" disabled={!firmware} onClick={applyPatch}>Create patched firmware copy</button>
-            {patched && <div className="export-card"><div><b>Recovery image ready</b><small>{changed.toLocaleString("en-US")} bytes changed · original untouched</small></div><button type="button" onClick={() => download(patched, `${firmwareName.replace(/\.(?:bin|jic)$/i, "") || "shapeshifter"}-${bankName || "custom"}.bin`)}>Download .bin ↓</button></div>}
-          </div>
-        </details>
         </section>
       </section>
 

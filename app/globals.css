@@ -57,17 +57,8 @@ h1 span { color:#6e7682; }
 label { color:var(--muted); font:9px var(--font-geist-mono); text-transform:uppercase; letter-spacing:.1em; }
 select,input { display:block; width:100%; margin-top:6px; background:#0f1216; border:1px solid #343b45; color:var(--ink); padding:10px; outline:none; }
 select:focus,input:focus { border-color:var(--yellow); }
-.firmware-state { display:flex; align-items:center; gap:12px; padding:14px; background:#101318; border:1px solid var(--line); margin-bottom:10px; }
-.firmware-state>span { width:38px; height:38px; display:grid; place-items:center; background:#222730; color:#8a939e; font:10px var(--font-geist-mono); }
-.firmware-state.valid>span { color:#111; background:#66e3a4; font-size:18px; }
-.firmware-state b,.firmware-state small,.export-card b,.export-card small { display:block; }
-.firmware-state b,.export-card b { font-size:12px; overflow-wrap:anywhere; }
-.firmware-state small,.export-card small { color:var(--muted); font-size:9px; margin-top:4px; }
 .wide { width:100%; padding:12px; margin-top:9px; border:0; }
 .wide.secondary { border:1px solid #414956; }
-.primary { background:var(--yellow); color:#121418; font-weight:750; }
-.export-card { border-left:2px solid #66e3a4; margin-top:14px; padding:12px; display:flex; align-items:center; justify-content:space-between; gap:10px; background:#101a17; }
-.export-card button { color:#66e3a4; background:transparent; border:0; font:10px var(--font-geist-mono); }
 .status-line { color:#a5acb5; font-size:10px; line-height:1.5; margin-top:18px; display:flex; gap:8px; }
 .status-line span { width:5px; height:5px; flex:0 0 auto; margin-top:5px; border-radius:50%; background:var(--blue); }
 .usb-section { max-width:1264px; margin:0 auto 60px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:58px 0; display:grid; grid-template-columns:1fr 480px; gap:90px; align-items:center; }
@@ -85,7 +76,6 @@ select:focus,input:focus { border-color:var(--yellow); }
 .module-silhouette .screen { position:absolute; left:25px; right:25px; top:25px; height:35px; background:#222f31; color:#7ca197; display:grid; place-items:center; font:9px var(--font-geist-mono); letter-spacing:.18em; }
 .module-silhouette i { display:block; width:24px; height:24px; border-radius:50%; border:5px solid #333b46; background:#0b0e11; justify-self:center; box-shadow:0 19px 0 -8px #59616b; }
 .connect { background:#e5e9ee; color:#111419; font-weight:700; }
-.restart-button { background:transparent; color:#aab2bc; border:1px solid #414956; }
 .jtag-button { background:#18232d; color:#8dbdff; border:1px solid #31465a; }
 .backup-button { background:#17231d; color:#8dddb7; border:1px solid #305743; }
 .backup-progress { height:4px; margin-top:8px; background:#0c0f12; overflow:hidden; }
@@ -160,8 +150,6 @@ h1 { max-width:none; font-size:28px; line-height:1; letter-spacing:-.035em; }
 .wave-tile { height:72px; }
 .controls-row { gap:7px; }
 select,input { margin-top:4px; padding:7px; }
-.firmware-state { padding:9px; margin-bottom:6px; }
-.firmware-state>span { width:30px; height:30px; }
 .wide { padding:8px; margin-top:6px; font-size:10px; }
 .status-line { margin-top:9px; font-size:9px; }
 .usb-section { grid-column:2; grid-row:1 / span 2; max-width:none; height:auto; margin:0; padding:14px; display:block; border:1px solid var(--line); overflow:visible; box-shadow:none; }
@@ -178,11 +166,6 @@ select,input { margin-top:4px; padding:7px; }
 dl div { grid-template-columns:67px 1fr; padding:5px 0; font-size:8px; }
 .flash-lock { margin-top:7px; padding:8px; }
 .backup-downloads,.write-review,.restore-review { padding:9px; }
-.emergency-tools { margin-top:9px; border-top:1px solid #34302d; }
-.emergency-tools summary { padding:8px 0 2px; cursor:pointer; color:#a98975; font:8px var(--font-geist-mono); text-transform:uppercase; letter-spacing:.08em; }
-.emergency-tools summary::marker { color:#a98975; }
-.emergency-body { margin-top:6px; padding:9px; border:1px solid #4b362a; background:#17110e; }
-.emergency-body>p { margin:0 0 8px; color:#9c887b; font:8px/1.45 var(--font-geist-mono); }
 footer { display:none; }
 
 @media(max-width:1100px){
