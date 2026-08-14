@@ -1,0 +1,11 @@
+{
+  "name": "WavePort — Shapeshifter Wavetable Studio",
+  "short_name": "WavePort",
+  "description": "Local-first wavetable firmware workspace for the Intellijel Shapeshifter.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0c0f13",
+  "theme_color": "#0c0f13",
+  "icons": [{ "src": "./favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
