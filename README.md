@@ -22,7 +22,8 @@ does not require a firmware image or a platform-specific application.
   an individual wave slot.
 - Extract consecutive 512-sample waves or distribute a longer recording across
   a bank.
-- Generate a coherent random harmonic bank with eight related waves.
+- Generate a wild but related random bank with moving formants, phase warping,
+  drive, and wave folding across its eight waves.
 - Preview all eight waves and choose any of the 128 bank slots.
 - Connect to the Shapeshifter from Chrome or Edge on macOS, Windows, or Linux.
 - Create one downloadable safety-backup file for the selected bank.
@@ -32,6 +33,9 @@ does not require a firmware image or a platform-specific application.
   write check fails.
 - Access full-firmware recovery tools in a deliberately collapsed emergency
   section.
+- Load either an exact 2 MB raw firmware image or the official Shapeshifter
+  EPCS16 `.jic`; compatible JIC containers are validated before their embedded
+  flash image is extracted locally.
 
 All audio conversion and firmware processing happens locally in the browser.
 No files are uploaded by the application.

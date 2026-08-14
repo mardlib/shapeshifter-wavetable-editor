@@ -11,6 +11,7 @@ import {
   audioToBank,
   bankToRaw,
   changedByteCount,
+  extractFirmwareImage,
   extractSequentialWaves,
   generateRandomBank,
   makeStarterBank,
@@ -150,6 +151,7 @@ export default function ShapeshifterStudio() {
   const [bankName, setBankName] = useState("MYWAVE");
   const [firmware, setFirmware] = useState<Uint8Array | null>(null);
   const [firmwareName, setFirmwareName] = useState("");
+  const [firmwareFormat, setFirmwareFormat] = useState<"BIN" | "JIC" | "">("");
   const [patched, setPatched] = useState<Uint8Array | null>(null);
   const [audioName, setAudioName] = useState("Starter Waves");
   const [status, setStatus] = useState("Ready. Files never leave your browser.");
@@ -241,11 +243,11 @@ export default function ShapeshifterStudio() {
   function makeRandomBank() {
     setBank(generateRandomBank());
     setSelectedWave(0);
-    setAudioName("Random Harmonic Bank");
+    setAudioName("Wild Random Bank");
     setPatched(null);
     setBackup(null);
     setWriteReviewOpen(false);
-    setStatus("Generated a coherent random bank: 8 smoothly evolving waves with a shared harmonic structure.");
+    setStatus("Generated a wild random bank: 8 evolving waves with moving formants, phase warping, drive, and wave folding.");
   }
 
   async function loadAudioFiles(files: File[]) {
@@ -306,18 +308,23 @@ export default function ShapeshifterStudio() {
   }
 
   async function loadFirmwareFile(file: File) {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    if (bytes.byteLength !== FIRMWARE_SIZE) {
-      setFirmware(null);
+    try {
+      const result = extractFirmwareImage(new Uint8Array(await file.arrayBuffer()));
+      setFirmware(result.bytes);
+      setFirmwareName(file.name);
+      setFirmwareFormat(result.format);
       setPatched(null);
-      setStatus(`Rejected: ${file.name} has ${bytes.byteLength.toLocaleString("en-US")} bytes instead of 2,097,152.`);
-      return;
+      const existing = readBankName(result.bytes, bankSlot);
+      setStatus(result.format === "JIC"
+        ? `Shapeshifter JIC validated and its 2 MB EPCS16 image extracted. Slot ${bankSlot + 1} is named “${existing || "empty"}”.`
+        : `Raw 2 MB firmware validated. Slot ${bankSlot + 1} is named “${existing || "empty"}”.`);
+    } catch (error) {
+      setFirmware(null);
+      setFirmwareName("");
+      setFirmwareFormat("");
+      setPatched(null);
+      setStatus(error instanceof Error ? `Rejected: ${file.name}. ${error.message}` : "The recovery image could not be read.");
     }
-    setFirmware(bytes);
-    setFirmwareName(file.name);
-    setPatched(null);
-    const existing = readBankName(bytes, bankSlot);
-    setStatus(`Original firmware validated. Slot ${bankSlot + 1} is currently named “${existing || "empty"}”.`);
   }
 
   function applyPatch() {
@@ -810,7 +817,7 @@ export default function ShapeshifterStudio() {
             <span>LONG FILE</span>
             <button type="button" className={importMode === "extract" ? "active" : ""} onClick={() => setImportMode("extract")}>Extract 512-sample windows</button>
             <button type="button" className={importMode === "spread" ? "active" : ""} onClick={() => setImportMode("spread")}>Distribute entire file</button>
-            <button className="random-bank-button" type="button" onClick={makeRandomBank}>↻ Generate Random Bank</button>
+            <button className="random-bank-button" type="button" onClick={makeRandomBank}>↻ Generate Wild Bank</button>
           </div>
 
           <div className="wave-grid">
@@ -898,13 +905,13 @@ export default function ShapeshifterStudio() {
             <p>Not required for normal bank writes. Use only to create a patched recovery image or restore a known-good full firmware image.</p>
             {usb && <button className="wide restart-button" type="button" disabled={jtagBusy} onClick={restartModule}>Restart module from flash</button>}
             <div className={`firmware-state ${firmware ? "valid" : ""}`}>
-              <span>{firmware ? "✓" : "BIN"}</span>
-              <div><b>{firmware ? firmwareName : "Load recovery .bin"}</b><small>{firmware ? "2,097,152 bytes · validated" : "Exact 2 MB image required"}</small></div>
+              <span>{firmware ? "✓" : "FW"}</span>
+              <div><b>{firmware ? firmwareName : "Load recovery .bin or .jic"}</b><small>{firmware ? `${firmwareFormat} · 2,097,152-byte image validated` : "Raw 2 MB BIN or Shapeshifter EPCS16 JIC"}</small></div>
             </div>
-            <input ref={firmwareInput} type="file" accept=".bin,application/octet-stream" hidden onChange={(event) => event.target.files?.[0] && void loadFirmwareFile(event.target.files[0])} />
+            <input ref={firmwareInput} type="file" accept=".bin,.jic,application/octet-stream" hidden onChange={(event) => event.target.files?.[0] && void loadFirmwareFile(event.target.files[0])} />
             <button className="wide secondary" type="button" onClick={() => firmwareInput.current?.click()}>{firmware ? "Choose different image" : "Choose recovery image"}</button>
             <button className="wide primary" type="button" disabled={!firmware} onClick={applyPatch}>Create patched firmware copy</button>
-            {patched && <div className="export-card"><div><b>Recovery image ready</b><small>{changed.toLocaleString("en-US")} bytes changed · original untouched</small></div><button type="button" onClick={() => download(patched, `${firmwareName.replace(/\.bin$/i, "") || "shapeshifter"}-${bankName || "custom"}.bin`)}>Download .bin ↓</button></div>}
+            {patched && <div className="export-card"><div><b>Recovery image ready</b><small>{changed.toLocaleString("en-US")} bytes changed · original untouched</small></div><button type="button" onClick={() => download(patched, `${firmwareName.replace(/\.(?:bin|jic)$/i, "") || "shapeshifter"}-${bankName || "custom"}.bin`)}>Download .bin ↓</button></div>}
             {firmware && !recoveryReviewOpen && <button className="wide recovery-button" type="button" disabled={jtagBusy} onClick={() => { setRecoveryConfirmation(""); setRecoveryReviewOpen(true); }}>Restore full firmware</button>}
             {firmware && recoveryReviewOpen && <div className="recovery-review">
               <b>⚠ Full Flash Recovery</b>

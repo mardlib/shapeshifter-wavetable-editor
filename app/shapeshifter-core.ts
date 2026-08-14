@@ -9,6 +9,57 @@ export const WAVE_BASE = 0x100000;
 
 export type WaveBank = Float32Array[];
 
+export type FirmwareImage = {
+  bytes: Uint8Array;
+  format: "BIN" | "JIC";
+};
+
+function containsAscii(source: Uint8Array, text: string, end = source.length): boolean {
+  const needle = new TextEncoder().encode(text);
+  const limit = Math.min(end, source.length) - needle.length;
+  for (let offset = 0; offset <= limit; offset++) {
+    let matches = true;
+    for (let index = 0; index < needle.length; index++) {
+      if (source[offset + index] !== needle[index]) { matches = false; break; }
+    }
+    if (matches) return true;
+  }
+  return false;
+}
+
+export function extractFirmwareImage(source: Uint8Array): FirmwareImage {
+  if (source.byteLength === FIRMWARE_SIZE) {
+    return { bytes: new Uint8Array(source), format: "BIN" };
+  }
+
+  const headerLimit = Math.min(512, source.length);
+  const isJic = source.length > FIRMWARE_SIZE
+    && source[0] === 0x4a && source[1] === 0x49 && source[2] === 0x43 && source[3] === 0x00;
+  if (!isJic) throw new Error("Expected an exact 2 MB .bin or a Shapeshifter EPCS16 .jic file.");
+  if (!containsAscii(source, "Quartus", headerLimit)
+    || !containsAscii(source, "EP4CE22", headerLimit)
+    || !containsAscii(source, "EPCS16", headerLimit)) {
+    throw new Error("Rejected: the JIC file does not identify a Shapeshifter-compatible EP4CE22 and EPCS16.");
+  }
+
+  const view = new DataView(source.buffer, source.byteOffset, source.byteLength);
+  let imageStart = -1;
+  for (let offset = 0; offset + 18 <= headerLimit; offset++) {
+    if (view.getUint16(offset, true) !== 0x001c) continue;
+    if (view.getUint32(offset + 2, true) !== FIRMWARE_SIZE + 12) continue;
+    imageStart = offset + 18;
+    break;
+  }
+  if (imageStart < 0 || imageStart + FIRMWARE_SIZE > source.length) {
+    throw new Error("Rejected: the JIC does not contain one complete 2 MB EPCS16 image.");
+  }
+  const footer = imageStart + FIRMWARE_SIZE;
+  if (footer + 2 > source.length || view.getUint16(footer, true) !== 0x001e) {
+    throw new Error("Rejected: the JIC payload boundary could not be verified.");
+  }
+  return { bytes: source.slice(imageStart, imageStart + FIRMWARE_SIZE), format: "JIC" };
+}
+
 export function makeStarterBank(): WaveBank {
   const makers = [
     (p: number) => Math.sin(p * Math.PI * 2),
@@ -28,36 +79,61 @@ export function makeStarterBank(): WaveBank {
 }
 
 export function generateRandomBank(random: () => number = Math.random): WaveBank {
-  const harmonicCount = 32;
-  const phases = Array.from({ length: harmonicCount }, (_, index) =>
-    index === 0 ? random() * Math.PI * 2 : (random() - 0.5) * Math.PI,
-  );
-  const decayA = 0.8 + random() * 1.25;
-  const decayB = 0.8 + random() * 1.25;
-  const driveAmount = random() * 0.8;
-  const profile = (harmonic: number, decay: number) => {
-    const broadShape = 0.3 + random() * 0.9;
-    const oddBias = harmonic % 2 === 1 ? 0.75 + random() * 0.5 : 0.2 + random() * 0.8;
-    return (broadShape * oddBias) / Math.pow(harmonic, decay);
-  };
-  const spectrumA = Array.from({ length: harmonicCount }, (_, index) => profile(index + 1, decayA));
-  const spectrumB = Array.from({ length: harmonicCount }, (_, index) => profile(index + 1, decayB));
-  spectrumA[0] = Math.max(0.65, spectrumA[0]);
-  spectrumB[0] = Math.max(0.65, spectrumB[0]);
+  const harmonicCount = 48;
+  const frameCount = 4;
+  const phases = Array.from({ length: harmonicCount }, () => random() * Math.PI * 2);
+  const spectra = Array.from({ length: frameCount }, () => {
+    const decay = 0.35 + random() * 1.25;
+    const formant = 3 + random() * 34;
+    const width = 1.5 + random() * 8;
+    const formantGain = 1.5 + random() * 7;
+    const oddGain = 0.25 + random() * 1.75;
+    const evenGain = 0.25 + random() * 1.75;
+    const combPeriod = 2 + Math.floor(random() * 8);
+    const combDepth = 0.25 + random() * 0.7;
+    const spectrum = Array.from({ length: harmonicCount }, (_, index) => {
+      const harmonic = index + 1;
+      const distance = (harmonic - formant) / width;
+      const formantShape = 1 + Math.exp(-0.5 * distance * distance) * formantGain;
+      const parity = harmonic % 2 ? oddGain : evenGain;
+      const comb = harmonic % combPeriod === 0 ? 1 : 1 - combDepth;
+      const jagged = 0.15 + random() * 1.85;
+      return (formantShape * parity * comb * jagged) / Math.pow(harmonic, decay);
+    });
+    spectrum[0] = Math.max(0.3, spectrum[0]);
+    return spectrum;
+  });
+  const warpHarmonic = 1 + Math.floor(random() * 7);
+  const warpPhase = random() * Math.PI * 2;
+  const warpStart = (random() - 0.5) * 1.2;
+  const warpEnd = (random() - 0.5) * 2.4;
+  const foldStart = 0.7 + random() * 1.4;
+  const foldEnd = 1.8 + random() * 5.2;
+  const driveStart = 0.7 + random() * 1.3;
+  const driveEnd = 1.2 + random() * 3.8;
 
   return Array.from({ length: WAVES_PER_BANK }, (_, waveIndex) => {
     const linear = waveIndex / (WAVES_PER_BANK - 1);
-    const morph = linear * linear * (3 - 2 * linear);
-    const drive = 1 + Math.sin(linear * Math.PI) * driveAmount;
+    const framePosition = linear * (frameCount - 1);
+    const leftFrame = Math.min(frameCount - 2, Math.floor(framePosition));
+    const frameMixLinear = framePosition - leftFrame;
+    const frameMix = frameMixLinear * frameMixLinear * (3 - 2 * frameMixLinear);
+    const warp = warpStart * (1 - linear) + warpEnd * linear + Math.sin(linear * Math.PI * 2) * 0.45;
+    const fold = foldStart * (1 - linear) + foldEnd * linear;
+    const drive = driveStart * (1 - linear) + driveEnd * linear;
     const wave = new Float32Array(SAMPLES_PER_WAVE);
     for (let sample = 0; sample < wave.length; sample++) {
       const phase = (sample / wave.length) * Math.PI * 2;
+      const warpedPhase = phase + Math.sin(phase * warpHarmonic + warpPhase) * warp;
       let value = 0;
       for (let harmonic = 1; harmonic <= harmonicCount; harmonic++) {
-        const amplitude = spectrumA[harmonic - 1] * (1 - morph) + spectrumB[harmonic - 1] * morph;
-        value += amplitude * Math.sin(phase * harmonic + phases[harmonic - 1]);
+        const amplitude = spectra[leftFrame][harmonic - 1] * (1 - frameMix)
+          + spectra[leftFrame + 1][harmonic - 1] * frameMix;
+        value += amplitude * Math.sin(warpedPhase * harmonic + phases[harmonic - 1]);
       }
-      wave[sample] = Math.tanh(value * drive);
+      const driven = Math.tanh(value * drive);
+      const folded = Math.sin(driven * fold * Math.PI);
+      wave[sample] = driven * (1 - linear * 0.45) + folded * (linear * 0.45);
     }
     return conditionWave(wave);
   });
