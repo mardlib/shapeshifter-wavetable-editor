@@ -1,5 +1,9 @@
 # Shapeshifter Wavetable Bank Editor
 
+[**Open the Shapeshifter Wavetable Bank Editor**](https://mardlib.github.io/shapeshifter-wavetable-editor/)
+
+![Shapeshifter Wavetable Bank Editor](docs/screenshot.jpg)
+
 A browser-based tool for creating and writing custom wavetable banks to an
 Intellijel Shapeshifter through its USB service connection. The normal workflow
 does not require a firmware image or a platform-specific application.
@@ -77,10 +81,12 @@ npm run build:pages
 
 ## GitHub Pages
 
-The included workflow in `.github/workflows/pages.yml` builds and deploys the
-static browser app whenever `main` is updated. In the repository settings,
-select **GitHub Actions** as the Pages source if GitHub does not enable it
-automatically.
+The current static build is published from the `gh-pages` branch:
+
+https://mardlib.github.io/shapeshifter-wavetable-editor/
+
+To publish an updated build, run `npm run build:pages` and deploy the contents
+of `dist-pages/` to that branch.
 
 WebUSB requires a secure context; the HTTPS URL provided by GitHub Pages meets
 that browser requirement.
