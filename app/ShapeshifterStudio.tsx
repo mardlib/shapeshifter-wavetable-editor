@@ -699,7 +699,6 @@ export default function ShapeshifterStudio() {
               {Array.from({ length: BANK_COUNT }, (_, index) => <option key={index} value={index}>{String(index + 1).padStart(3, "0")}</option>)}
             </select></label>
             <label>Display name<input value={bankName} maxLength={6} onChange={(event) => { setBankName(event.target.value.toUpperCase()); setPatched(null); }} /></label>
-            <button className="secondary" type="button" onClick={() => download(bankToRaw(bank), `${bankName || "BANK"}.raw`)}>Export RAW</button>
           </div>
         </div>
 
