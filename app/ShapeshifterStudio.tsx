@@ -6,7 +6,6 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   BANK_COUNT,
-  FIRMWARE_SIZE,
   WaveBank,
   audioToBank,
   bankToRaw,
@@ -166,9 +165,6 @@ export default function ShapeshifterStudio() {
   const [writeConfirmation, setWriteConfirmation] = useState("");
   const [waveDropTarget, setWaveDropTarget] = useState<number | null>(null);
   const [importMode, setImportMode] = useState<ImportMode>("extract");
-  const [recoveryReviewOpen, setRecoveryReviewOpen] = useState(false);
-  const [recoveryConfirmation, setRecoveryConfirmation] = useState("");
-  const [recoveryProgress, setRecoveryProgress] = useState(0);
   const [restoreBackup, setRestoreBackup] = useState<RestoreBackup | null>(null);
   const [restoreConfirmation, setRestoreConfirmation] = useState("");
   const [restoreProgress, setRestoreProgress] = useState(0);
@@ -716,74 +712,6 @@ export default function ShapeshifterStudio() {
     }
   }
 
-  async function restoreFullFirmware() {
-    if (!firmware || firmware.length !== FIRMWARE_SIZE) return;
-    setUsbError("");
-    setJtagBusy(true);
-    setRecoveryReviewOpen(false);
-    setRecoveryProgress(0);
-    let device: any = null;
-    let interfaceNumber = 0;
-    let jtag: UsbBlasterJtag | null = null;
-    let bridgeLoaded = false;
-    try {
-      const session = await openJtagSession();
-      ({ device, interfaceNumber, jtag } = session);
-      await jtag.readIdCode();
-      const id = await jtag.readIdCode();
-      if (!expectedShapeshifter(id)) throw new Error(`Recovery canceled: wrong FPGA ${formatIdCode(id)}.`);
-
-      setStatus("Full recovery: loading the SPI bridge into volatile FPGA memory …");
-      const response = await fetch(new URL("bridges/spiOverJtag_ep4ce2217.rbf", document.baseURI));
-      if (!response.ok) throw new Error("The SPI bridge could not be loaded.");
-      await jtag.loadSpiBridge(new Uint8Array(await response.arrayBuffer()), (fraction) => setRecoveryProgress(fraction * 10));
-      bridgeLoaded = true;
-      const siliconId = await jtag.readEpcsSiliconId();
-      if (siliconId !== 0x14) throw new Error(`Recovery canceled: expected EPCS16 ID 0x14, read 0x${siliconId.toString(16).padStart(2, "0")}.`);
-
-      let changedSectors = 0;
-      for (let sector = 0; sector < 32; sector++) {
-        const address = sector * 0x10000;
-        const target = firmware.subarray(address, address + 0x10000);
-        setStatus(`Full recovery: checking sector ${sector + 1}/32 …`);
-        const before = await jtag.readFlash(address, 0x10000);
-        if (!equalBytes(before, target)) {
-          changedSectors++;
-          let verified = false;
-          for (let attempt = 1; attempt <= 2 && !verified; attempt++) {
-            setStatus(`Full recovery: writing sector ${sector + 1}/32${attempt === 2 ? " again" : ""} …`);
-            await jtag.writeFlashSector(address, target, (fraction) => setRecoveryProgress(10 + ((sector + fraction) / 32) * 88));
-            verified = equalBytes(await jtag.readFlash(address, 0x10000), target);
-          }
-          if (!verified) {
-            setStatus(`Recovery verification failed — restoring flash sector ${sector} to its state before this attempt …`);
-            await jtag.writeFlashSector(address, before);
-            const restored = equalBytes(await jtag.readFlash(address, 0x10000), before);
-            throw new Error(`Flash sector ${sector} could not be verified.${restored ? " Its previous contents were restored." : " WARNING: restoration was not verified."}`);
-          }
-        }
-        setRecoveryProgress(10 + ((sector + 1) / 32) * 88);
-      }
-
-      setStatus("Full recovery fully verified — restarting the Shapeshifter from flash …");
-      await jtag.restartFromFlash();
-      bridgeLoaded = false;
-      setRecoveryProgress(100);
-      setJtagId("");
-      setBackup(null);
-      setStatus(`Full firmware recovery completed: wrote ${changedSectors} of 32 sectors and verified every sector.`);
-    } catch (error) {
-      setUsbError(error instanceof Error ? error.message : "Full firmware recovery failed.");
-    } finally {
-      if (bridgeLoaded && jtag) {
-        try { await jtag.restartFromFlash(); } catch {}
-      }
-      try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
-      try { if (device?.opened) await device.close(); } catch {}
-      setJtagBusy(false);
-    }
-  }
-
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     void loadAudioFiles(Array.from(event.dataTransfer.files));
@@ -902,7 +830,7 @@ export default function ShapeshifterStudio() {
         <details className="emergency-tools">
           <summary>Emergency firmware tools</summary>
           <div className="emergency-body">
-            <p>Not required for normal bank writes. Use only to create a patched recovery image or restore a known-good full firmware image.</p>
+            <p>Not required for normal bank writes. This section only creates a patched firmware copy for use with an external programmer; it never writes full firmware to the module.</p>
             {usb && <button className="wide restart-button" type="button" disabled={jtagBusy} onClick={restartModule}>Restart module from flash</button>}
             <div className={`firmware-state ${firmware ? "valid" : ""}`}>
               <span>{firmware ? "✓" : "FW"}</span>
@@ -912,14 +840,6 @@ export default function ShapeshifterStudio() {
             <button className="wide secondary" type="button" onClick={() => firmwareInput.current?.click()}>{firmware ? "Choose different image" : "Choose recovery image"}</button>
             <button className="wide primary" type="button" disabled={!firmware} onClick={applyPatch}>Create patched firmware copy</button>
             {patched && <div className="export-card"><div><b>Recovery image ready</b><small>{changed.toLocaleString("en-US")} bytes changed · original untouched</small></div><button type="button" onClick={() => download(patched, `${firmwareName.replace(/\.(?:bin|jic)$/i, "") || "shapeshifter"}-${bankName || "custom"}.bin`)}>Download .bin ↓</button></div>}
-            {firmware && !recoveryReviewOpen && <button className="wide recovery-button" type="button" disabled={jtagBusy} onClick={() => { setRecoveryConfirmation(""); setRecoveryReviewOpen(true); }}>Restore full firmware</button>}
-            {firmware && recoveryReviewOpen && <div className="recovery-review">
-              <b>⚠ Full Flash Recovery</b>
-              <p>The loaded file “{firmwareName}” may replace all 32 flash sectors when they differ. Use only a known-good Shapeshifter firmware image. Do not disconnect power or USB during recovery.</p>
-              <label>Type exactly to unlock<input value={recoveryConfirmation} onChange={(event) => setRecoveryConfirmation(event.target.value)} placeholder="RESTORE FULL FLASH" autoComplete="off" /></label>
-              <div><button type="button" onClick={() => setRecoveryReviewOpen(false)}>Cancel</button><button className="confirm-recovery" type="button" disabled={recoveryConfirmation !== "RESTORE FULL FLASH"} onClick={restoreFullFirmware}>Start recovery</button></div>
-            </div>}
-            {recoveryProgress > 0 && recoveryProgress < 100 && <div className="recovery-progress" aria-label={`Recovery ${Math.round(recoveryProgress)} percent`}><i style={{ width: `${recoveryProgress}%` }} /></div>}
           </div>
         </details>
         </section>

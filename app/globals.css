@@ -68,15 +68,6 @@ select:focus,input:focus { border-color:var(--yellow); }
 .primary { background:var(--yellow); color:#121418; font-weight:750; }
 .export-card { border-left:2px solid #66e3a4; margin-top:14px; padding:12px; display:flex; align-items:center; justify-content:space-between; gap:10px; background:#101a17; }
 .export-card button { color:#66e3a4; background:transparent; border:0; font:10px var(--font-geist-mono); }
-.recovery-button { color:#ffb37b; background:#21160f; border:1px solid #684126; }
-.recovery-review { margin-top:10px; padding:13px; border:1px solid #7c4528; background:#21130e; }
-.recovery-review>b { color:#ff9e66; font-size:10px; }
-.recovery-review p { color:#c2a18d; font-size:9px; line-height:1.5; }
-.recovery-review>div { display:flex; gap:6px; margin-top:9px; }
-.recovery-review button { flex:1; padding:8px; border:1px solid #67432f; color:#c5a38e; background:transparent; font:9px var(--font-geist-mono); }
-.recovery-review .confirm-recovery { color:#1a100b; background:#ff9e66; border-color:#ff9e66; font-weight:800; }
-.recovery-progress { height:4px; margin-top:8px; background:#0c0f12; overflow:hidden; }
-.recovery-progress i { display:block; height:100%; background:#ff9e66; transition:width .18s ease; }
 .status-line { color:#a5acb5; font-size:10px; line-height:1.5; margin-top:18px; display:flex; gap:8px; }
 .status-line span { width:5px; height:5px; flex:0 0 auto; margin-top:5px; border-radius:50%; background:var(--blue); }
 .usb-section { max-width:1264px; margin:0 auto 60px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:58px 0; display:grid; grid-template-columns:1fr 480px; gap:90px; align-items:center; }
@@ -186,7 +177,7 @@ select,input { margin-top:4px; padding:7px; }
 .module-silhouette { display:none; }
 dl div { grid-template-columns:67px 1fr; padding:5px 0; font-size:8px; }
 .flash-lock { margin-top:7px; padding:8px; }
-.backup-downloads,.write-review,.restore-review,.recovery-review { padding:9px; }
+.backup-downloads,.write-review,.restore-review { padding:9px; }
 .emergency-tools { margin-top:9px; border-top:1px solid #34302d; }
 .emergency-tools summary { padding:8px 0 2px; cursor:pointer; color:#a98975; font:8px var(--font-geist-mono); text-transform:uppercase; letter-spacing:.08em; }
 .emergency-tools summary::marker { color:#a98975; }

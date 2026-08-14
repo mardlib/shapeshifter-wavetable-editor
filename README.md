@@ -31,11 +31,13 @@ does not require a firmware image or a platform-specific application.
   other seven banks stored in the same flash sector.
 - Write and verify the selected bank, with automatic in-session rollback if a
   write check fails.
-- Access full-firmware recovery tools in a deliberately collapsed emergency
-  section.
 - Load either an exact 2 MB raw firmware image or the official Shapeshifter
   EPCS16 `.jic`; compatible JIC containers are validated before their embedded
-  flash image is extracted locally.
+  flash image is extracted locally for creating a patched `.bin` copy.
+
+The app deliberately does not offer full-firmware flashing. That path has not
+been validated on hardware and should be performed with a supported external
+programmer instead.
 
 All audio conversion and firmware processing happens locally in the browser.
 No files are uploaded by the application.
