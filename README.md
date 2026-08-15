@@ -26,6 +26,7 @@ does not require a firmware image or a platform-specific application.
   drive, and wave folding across its eight waves.
 - Preview all eight waves and choose any of the 128 bank slots.
 - Connect to the Shapeshifter from Chrome or Edge on macOS, Windows, or Linux.
+- Install WavePort as an app and use it without an internet connection.
 - Create one downloadable safety-backup file for the selected bank.
 - Restore a downloaded bank backup in a later session without changing the
   other seven banks stored in the same flash sector.
@@ -43,6 +44,15 @@ No files are uploaded by the application.
 
 Safari and Firefox do not currently expose the WebUSB API required by this
 tool.
+
+## Install for offline use
+
+Open the hosted WavePort page once in desktop Chrome or Edge, then choose the
+browser's **Install WavePort** action. The installed app opens in its own window
+and keeps the complete interface and Shapeshifter USB bridge available offline.
+
+An internet connection is only needed for the initial installation and to
+receive future updates. USB access and all audio processing remain local.
 
 ## Normal workflow
 
