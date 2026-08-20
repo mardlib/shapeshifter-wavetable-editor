@@ -32,6 +32,14 @@ does not require a firmware image or a platform-specific application.
   other seven banks stored in the same flash sector.
 - Write and verify the selected bank, with automatic in-session rollback if a
   write check fails.
+- Run a guarded full-firmware test from a validated official Shapeshifter JIC:
+  read the complete 8 MB EPCS64 twice, save the fresh physical-flash dump,
+  write only populated sectors specified by the JIC, verify them, confirm all
+  omitted sectors still match the backup, and only then restart the FPGA.
+- Automatically restore and verify the original full-flash dump if the
+  firmware write or pre-boot verification fails, or load that dump later for
+  manual recovery after an unsuccessful hardware test.
+
 All audio conversion and bank processing happens locally in the browser.
 No files are uploaded by the application.
 
@@ -70,6 +78,36 @@ new bank has been tested. To restore it later, verify the Shapeshifter, choose
 **Restore a downloaded bank backup**, load the file, and enter the displayed
 confirmation phrase. The restore process copies only the bank and name recorded
 in the file, verifies both, and leaves neighboring banks unchanged.
+
+## Experimental firmware test and recovery
+
+Hardware testing showed that treating the sparse JIC payload as a complete
+image can prevent boot. The corrected sparse-sector flow was subsequently
+verified on hardware: it wrote only the six changed populated sectors from the
+official v2.04 JIC, passed the complete 8 MB readback, and booted normally.
+The feature remains experimental and always requires a fresh persistent backup.
+
+The collapsed firmware section is independent of the normal bank workflow. It
+accepts an official Shapeshifter `.jic` only after its Quartus, EP4CE22, EPCS16,
+payload-size, and payload-boundary fields have been validated. Immediately
+before every test, the app confirms the fitted EPCS64, reads all physical 8 MB
+twice, and requires that matching dump to be saved outside browser memory
+before the first erase/write. The official image remains 2 MB. Fully blank JIC
+sectors are treated as unassigned and preserved from the backup; populated JIC
+sectors are the only update targets. The rest of the physical 8 MB flash is
+also preserved.
+
+Two intentionally separate comparisons are used:
+
+- after an update, populated JIC sectors must equal the corresponding official
+  bytes and every omitted sector must equal the pre-test backup before restart;
+- after automatic or manual recovery, all physical 8 MB must equal the
+  original pre-test dump byte-for-byte.
+
+The original dump is never compared with the new firmware image. It preserves
+the exact pre-test state, including existing wavetables, presets, calibration,
+and every other byte in the EPCS64. Keep it until the module has booted and its
+hardware operation has been confirmed.
 
 ## Local development
 

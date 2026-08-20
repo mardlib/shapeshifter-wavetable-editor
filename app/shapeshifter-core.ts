@@ -1,3 +1,4 @@
+export const FIRMWARE_SIZE = 2 * 1024 * 1024;
 export const BANK_COUNT = 128;
 export const WAVES_PER_BANK = 8;
 export const SAMPLES_PER_WAVE = 512;
@@ -5,6 +6,91 @@ export const BYTES_PER_SAMPLE = 2;
 export const BANK_BYTES = WAVES_PER_BANK * SAMPLES_PER_WAVE * BYTES_PER_SAMPLE;
 
 export type WaveBank = Float32Array[];
+
+export type FirmwareImage = {
+  bytes: Uint8Array;
+  format: "BIN" | "JIC";
+  /** Flash sectors explicitly carrying data in the programming file. */
+  programmedSectors: number[];
+};
+
+const FIRMWARE_SECTOR_SIZE = 0x10000;
+
+function populatedSectors(bytes: Uint8Array) {
+  const sectors: number[] = [];
+  for (let sector = 0; sector < bytes.length / FIRMWARE_SECTOR_SIZE; sector++) {
+    const start = sector * FIRMWARE_SECTOR_SIZE;
+    const end = start + FIRMWARE_SECTOR_SIZE;
+    for (let offset = start; offset < end; offset++) {
+      if (bytes[offset] !== 0xff) {
+        sectors.push(sector);
+        break;
+      }
+    }
+  }
+  return sectors;
+}
+
+function containsAscii(source: Uint8Array, text: string, end = source.length): boolean {
+  const needle = new TextEncoder().encode(text);
+  const limit = Math.min(end, source.length) - needle.length;
+  for (let offset = 0; offset <= limit; offset++) {
+    let matches = true;
+    for (let index = 0; index < needle.length; index++) {
+      if (source[offset + index] !== needle[index]) { matches = false; break; }
+    }
+    if (matches) return true;
+  }
+  return false;
+}
+
+function reverseBits(value: number): number {
+  let reversed = 0;
+  for (let bit = 0; bit < 8; bit++) reversed = (reversed << 1) | ((value >>> bit) & 1);
+  return reversed;
+}
+
+/** Extract the EPCS16 image from a Quartus JIC and convert it to flash byte order. */
+export function extractFirmwareImage(source: Uint8Array): FirmwareImage {
+  if (source.byteLength === FIRMWARE_SIZE) {
+    return {
+      bytes: new Uint8Array(source),
+      format: "BIN",
+      programmedSectors: Array.from({ length: FIRMWARE_SIZE / FIRMWARE_SECTOR_SIZE }, (_, sector) => sector),
+    };
+  }
+
+  const headerLimit = Math.min(512, source.length);
+  const isJic = source.length > FIRMWARE_SIZE
+    && source[0] === 0x4a && source[1] === 0x49 && source[2] === 0x43 && source[3] === 0x00;
+  if (!isJic) throw new Error("Expected an exact 2 MB .bin or a Shapeshifter EPCS16 .jic file.");
+  if (!containsAscii(source, "Quartus", headerLimit)
+    || !containsAscii(source, "EP4CE22", headerLimit)
+    || !containsAscii(source, "EPCS16", headerLimit)) {
+    throw new Error("Rejected: the JIC file does not identify a Shapeshifter-compatible EP4CE22 and EPCS16.");
+  }
+
+  const view = new DataView(source.buffer, source.byteOffset, source.byteLength);
+  let imageStart = -1;
+  for (let offset = 0; offset + 18 <= headerLimit; offset++) {
+    if (view.getUint16(offset, true) !== 0x001c) continue;
+    if (view.getUint32(offset + 2, true) !== FIRMWARE_SIZE + 12) continue;
+    imageStart = offset + 18;
+    break;
+  }
+  if (imageStart < 0 || imageStart + FIRMWARE_SIZE > source.length) {
+    throw new Error("Rejected: the JIC does not contain one complete 2 MB EPCS16 image.");
+  }
+  const footer = imageStart + FIRMWARE_SIZE;
+  if (footer + 2 > source.length || view.getUint16(footer, true) !== 0x001e) {
+    throw new Error("Rejected: the JIC payload boundary could not be verified.");
+  }
+  const bytes = new Uint8Array(FIRMWARE_SIZE);
+  for (let index = 0; index < bytes.length; index++) bytes[index] = reverseBits(source[imageStart + index]);
+  const programmedSectors = populatedSectors(bytes);
+  if (programmedSectors.length === 0) throw new Error("Rejected: the JIC contains no programmable flash sectors.");
+  return { bytes, format: "JIC", programmedSectors };
+}
 
 export function makeStarterBank(): WaveBank {
   const makers = [

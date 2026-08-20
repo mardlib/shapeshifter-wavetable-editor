@@ -9,13 +9,29 @@ import {
   WaveBank,
   audioToBank,
   bankToRaw,
+  extractFirmwareImage,
   extractSequentialWaves,
   generateRandomBank,
   makeStarterBank,
   singleCycleToBank,
   singleCycleToWave,
 } from "./shapeshifter-core";
+import type { FirmwareImage } from "./shapeshifter-core";
+import {
+  createJicProgrammingTarget,
+  createVerifiedFullFlashBackup,
+  FLASH_SECTOR_SIZE,
+  FirmwareStage,
+  FirmwareUpdateError,
+  PHYSICAL_FLASH_SIZE,
+  restoreFullFlashBackup,
+  runSafeFirmwareUpdate,
+} from "./firmware-update";
 import { UsbBlasterJtag, expectedShapeshifter, formatIdCode } from "./webusb-jtag";
+
+// Hardware writes are exposed only through the verified sparse-JIC flow:
+// persistent double-read backup, changed populated sectors only, full readback.
+const FIRMWARE_WRITES_ENABLED = true;
 
 type UsbSummary = {
   product: string;
@@ -40,6 +56,13 @@ type RestoreBackup = FlashBackup & {
 };
 
 type ImportMode = "extract" | "spread";
+
+type FullFirmwareFile = {
+  bytes: Uint8Array;
+  filename: string;
+};
+
+type OfficialFirmwareFile = FirmwareImage & { filename: string };
 
 const USB_BLASTER_VENDOR = 0x09fb;
 const USB_BLASTER_PRODUCT = 0x6001;
@@ -160,9 +183,19 @@ export default function ShapeshifterStudio() {
   const [restoreBackup, setRestoreBackup] = useState<RestoreBackup | null>(null);
   const [restoreConfirmation, setRestoreConfirmation] = useState("");
   const [restoreProgress, setRestoreProgress] = useState(0);
+  const [officialFirmware, setOfficialFirmware] = useState<OfficialFirmwareFile | null>(null);
+  const [fullRecoveryBackup, setFullRecoveryBackup] = useState<FullFirmwareFile | null>(null);
+  const [firmwareConfirmation, setFirmwareConfirmation] = useState("");
+  const [fullRecoveryConfirmation, setFullRecoveryConfirmation] = useState("");
+  const [firmwareProgress, setFirmwareProgress] = useState(0);
+  const [fullFlashBackupName, setFullFlashBackupName] = useState("");
+  const [flashCapacityResult, setFlashCapacityResult] = useState("");
+  const [firmwareDryRunResult, setFirmwareDryRunResult] = useState("");
   const [webUsbAvailable, setWebUsbAvailable] = useState(false);
   const audioInput = useRef<HTMLInputElement>(null);
   const restoreInput = useRef<HTMLInputElement>(null);
+  const officialFirmwareInput = useRef<HTMLInputElement>(null);
+  const fullRecoveryInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const available = "usb" in navigator;
@@ -466,7 +499,7 @@ export default function ShapeshifterStudio() {
       await jtag.loadSpiBridge(new Uint8Array(await response.arrayBuffer()), (fraction) => setRestoreProgress(fraction * 15));
       bridgeLoaded = true;
       const siliconId = await jtag.readEpcsSiliconId();
-      if (siliconId !== 0x14) throw new Error(`Restore canceled: unexpected flash ID 0x${siliconId.toString(16).padStart(2, "0")}.`);
+      if (siliconId !== 0x14 && siliconId !== 0x16) throw new Error(`Restore canceled: unexpected flash ID 0x${siliconId.toString(16).padStart(2, "0")}.`);
 
       setStatus("Reading the current bank data before restore …");
       currentNames = await jtag.readFlash(0x0f0000, 0x10000, (fraction) => setRestoreProgress(15 + fraction * 7));
@@ -641,6 +674,329 @@ export default function ShapeshifterStudio() {
     }
   }
 
+  async function loadOfficialFirmware(file: File) {
+    setUsbError("");
+    try {
+      const parsed = extractFirmwareImage(new Uint8Array(await file.arrayBuffer()));
+      if (parsed.format !== "JIC") {
+        throw new Error("Firmware tests require an official Shapeshifter .jic file, not a raw image.");
+      }
+      setOfficialFirmware({ ...parsed, filename: file.name });
+      setFirmwareConfirmation("");
+      setFirmwareProgress(0);
+      setStatus(`Validated ${file.name}: compatible EP4CE22/EPCS16 JIC with ${parsed.programmedSectors.length} populated sectors.`);
+    } catch (error) {
+      setOfficialFirmware(null);
+      setFirmwareConfirmation("");
+      setUsbError(error instanceof Error ? error.message : "The firmware file could not be validated.");
+    }
+  }
+
+  async function loadFullRecoveryBackup(file: File) {
+    setUsbError("");
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (bytes.length !== PHYSICAL_FLASH_SIZE) {
+        throw new Error(`Recovery requires the exact ${PHYSICAL_FLASH_SIZE.toLocaleString("en-US")}-byte EPCS64 dump created before the test.`);
+      }
+      setFullRecoveryBackup({ bytes, filename: file.name });
+      setFullRecoveryConfirmation("");
+      setFirmwareProgress(0);
+      setStatus(`Full-flash recovery dump loaded: ${file.name}. It will be verified only against this same dump.`);
+    } catch (error) {
+      setFullRecoveryBackup(null);
+      setFullRecoveryConfirmation("");
+      setUsbError(error instanceof Error ? error.message : "The full-flash backup could not be loaded.");
+    }
+  }
+
+  async function loadFullFlashBridge(jtag: UsbBlasterJtag, progress: (fraction: number) => void) {
+    await jtag.readIdCode();
+    const id = await jtag.readIdCode();
+    if (!expectedShapeshifter(id)) throw new Error(`Canceled: wrong FPGA ${formatIdCode(id)}.`);
+    const response = await fetch(new URL("bridges/spiOverJtag_ep4ce2217.rbf", document.baseURI));
+    if (!response.ok) throw new Error("The full-flash service could not be prepared.");
+    await jtag.loadSpiBridge(new Uint8Array(await response.arrayBuffer()), progress);
+    const siliconId = await jtag.readEpcsSiliconId();
+    if (siliconId !== 0x16) {
+      throw new Error(`Canceled: this tested flow requires EPCS64 ID 0x16, read 0x${siliconId.toString(16).padStart(2, "0")}.`);
+    }
+  }
+
+  function reportFirmwareProgress(stage: FirmwareStage, fraction: number) {
+    const ranges: Record<FirmwareStage, [number, number, string]> = {
+      "backup-read": [10, 23, "Reading the complete 8 MB physical flash backup (first pass) …"],
+      "backup-confirm": [23, 36, "Reading the complete flash again to verify the backup …"],
+      "backup-save": [36, 40, "Saving the verified full-flash backup before writing …"],
+      "update-write": [40, 75, "Writing only populated sectors specified by the JIC …"],
+      "update-verify": [75, 98, "Reading all 8 MB; verifying JIC sectors and preserved backup sectors …"],
+      "rollback-write": [40, 78, "Update error — restoring the original complete 2 MB region …"],
+      "rollback-verify": [78, 98, "Verifying recovery against the original full-flash backup …"],
+      "recovery-write": [10, 72, "Writing all 32 sectors from the selected full-flash backup …"],
+      "recovery-verify": [72, 98, "Reading all 8 MB and comparing with the selected physical-flash backup …"],
+      restart: [98, 100, "Verified byte-for-byte. Restarting the Shapeshifter from flash …"],
+    };
+    const [start, end, message] = ranges[stage];
+    setFirmwareProgress(start + (end - start) * fraction);
+    setStatus(message);
+  }
+
+  async function chooseFullBackupDestination() {
+    const created = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `shapeshifter-full-flash-before-firmware-${created}.bin`;
+    const picker = (window as any).showSaveFilePicker as undefined | ((options: any) => Promise<any>);
+    if (picker) {
+      try {
+        const handle = await picker({
+          suggestedName: filename,
+          types: [{ description: "EPCS64 8 MB physical-flash dump", accept: { "application/octet-stream": [".bin"] } }],
+        });
+        return async (bytes: Uint8Array) => {
+          const writable = await handle.createWritable();
+          await writable.write(bytes);
+          await writable.close();
+        };
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return null;
+        throw error;
+      }
+    }
+    return async (bytes: Uint8Array) => {
+      download(bytes, filename);
+      if (!window.confirm(
+        `The 8 MB backup download “${filename}” was started. Confirm only after the file is safely stored. No firmware will be written otherwise.`,
+      )) throw new Error("Firmware test canceled because permanent backup storage was not confirmed.");
+    };
+  }
+
+  async function testOfficialFirmware() {
+    if (!FIRMWARE_WRITES_ENABLED) {
+      setUsbError("Firmware writing is temporarily disabled after hardware validation. Read-only backup and full recovery remain available.");
+      return;
+    }
+    if (!officialFirmware) return;
+    let persistBackup: ((bytes: Uint8Array) => Promise<void>) | null;
+    try {
+      persistBackup = await chooseFullBackupDestination();
+    } catch (error) {
+      setUsbError(error instanceof Error ? error.message : "The permanent backup destination could not be opened.");
+      return;
+    }
+    if (!persistBackup) {
+      setStatus("Firmware test canceled before accessing the Shapeshifter. Nothing was changed.");
+      return;
+    }
+
+    setUsbError("");
+    setJtagBusy(true);
+    setFirmwareConfirmation("");
+    setFirmwareProgress(0);
+    let device: any = null;
+    let interfaceNumber = 0;
+    let jtag: UsbBlasterJtag | null = null;
+    let bridgeLoaded = false;
+    let flashWriteAttempted = false;
+    try {
+      const session = await openJtagSession();
+      ({ device, interfaceNumber, jtag } = session);
+      setStatus("Verifying the Shapeshifter and loading the volatile full-flash service …");
+      await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      bridgeLoaded = true;
+      const progress = (stage: FirmwareStage, fraction: number) => {
+        if (stage === "update-write") flashWriteAttempted = true;
+        reportFirmwareProgress(stage, fraction);
+      };
+      const result = await runSafeFirmwareUpdate(jtag, officialFirmware, persistBackup, progress);
+      bridgeLoaded = false;
+      setFirmwareProgress(100);
+      setJtagId("");
+      setStatus(result.changed
+        ? "The populated JIC sectors and all preserved backup sectors matched byte-for-byte. The Shapeshifter restarted."
+        : "All populated JIC sectors were already installed. No flash write was performed; the Shapeshifter restarted.");
+    } catch (error) {
+      if (error instanceof FirmwareUpdateError && error.restarted) bridgeLoaded = false;
+      if (bridgeLoaded && jtag && !flashWriteAttempted) {
+        try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
+      }
+      setUsbError(error instanceof Error ? error.message : "Safe firmware test failed.");
+    } finally {
+      // Never restart an incompletely written flash here. The transaction only
+      // restarts after update verification or verified rollback.
+      try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
+      try { if (device?.opened) await device.close(); } catch {}
+      setJtagBusy(false);
+    }
+  }
+
+  async function createReadOnlyFullFlashBackup() {
+    const created = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `shapeshifter-full-flash-read-only-${created}.bin`;
+    setUsbError("");
+    setJtagBusy(true);
+    setFirmwareProgress(0);
+    setFullFlashBackupName("");
+    let device: any = null;
+    let interfaceNumber = 0;
+    let jtag: UsbBlasterJtag | null = null;
+    let bridgeLoaded = false;
+    try {
+      const session = await openJtagSession();
+      ({ device, interfaceNumber, jtag } = session);
+      setStatus("Verifying the Shapeshifter and loading the volatile read-only flash service …");
+      await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      bridgeLoaded = true;
+      await createVerifiedFullFlashBackup(
+        jtag,
+        async (bytes) => download(bytes, filename),
+        reportFirmwareProgress,
+      );
+      setStatus("Both complete physical-flash reads match and the 8 MB dump was downloaded. Restarting from the unchanged flash …");
+      await jtag.restartFromFlash();
+      bridgeLoaded = false;
+      setFirmwareProgress(100);
+      setFullFlashBackupName(filename);
+      setJtagId("");
+      setStatus(`Read-only test complete: two matching 8 MB reads saved as ${filename}; no flash write was performed.`);
+    } catch (error) {
+      if (bridgeLoaded && jtag) {
+        try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
+      }
+      setUsbError(error instanceof Error ? error.message : "Read-only full-flash backup failed.");
+    } finally {
+      try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
+      try { if (device?.opened) await device.close(); } catch {}
+      setJtagBusy(false);
+    }
+  }
+
+  async function runFirmwareDryRun() {
+    if (!officialFirmware) return;
+    setUsbError("");
+    setFirmwareDryRunResult("");
+    setJtagBusy(true);
+    setFirmwareProgress(0);
+    let device: any = null;
+    let interfaceNumber = 0;
+    let jtag: UsbBlasterJtag | null = null;
+    let bridgeLoaded = false;
+    try {
+      const session = await openJtagSession();
+      ({ device, interfaceNumber, jtag } = session);
+      setStatus("Loading the volatile read-only flash service …");
+      await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      bridgeLoaded = true;
+      setStatus("Dry run: reading all 8 MB; no erase or write commands are used …");
+      const current = await jtag.readFlash(0, PHYSICAL_FLASH_SIZE, (fraction) => setFirmwareProgress(10 + fraction * 80));
+      const { changedSectors } = createJicProgrammingTarget(officialFirmware, current);
+      const formatted = changedSectors.length
+        ? changedSectors.map((sector) => `0x${sector.toString(16).padStart(2, "0")}`).join(", ")
+        : "none";
+      const preserved = (PHYSICAL_FLASH_SIZE / FLASH_SECTOR_SIZE) - officialFirmware.programmedSectors.length;
+      setStatus("Dry run complete. Restarting the Shapeshifter from the unchanged flash …");
+      await jtag.restartFromFlash();
+      bridgeLoaded = false;
+      setFirmwareProgress(100);
+      setFirmwareDryRunResult(`${officialFirmware.programmedSectors.length} populated JIC sectors; ${changedSectors.length} would change (${formatted}); ${preserved} physical sectors would remain byte-for-byte unchanged.`);
+      setStatus("Firmware dry run complete — no flash write was performed.");
+    } catch (error) {
+      if (bridgeLoaded && jtag) {
+        try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
+      }
+      setUsbError(error instanceof Error ? error.message : "Firmware dry run failed.");
+    } finally {
+      try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
+      try { if (device?.opened) await device.close(); } catch {}
+      setJtagBusy(false);
+    }
+  }
+
+  async function probeFlashCapacityReadOnly() {
+    setUsbError("");
+    setFlashCapacityResult("");
+    setJtagBusy(true);
+    setFirmwareProgress(0);
+    let device: any = null;
+    let interfaceNumber = 0;
+    let jtag: UsbBlasterJtag | null = null;
+    let bridgeLoaded = false;
+    try {
+      const session = await openJtagSession();
+      ({ device, interfaceNumber, jtag } = session);
+      await jtag.readIdCode();
+      const id = await jtag.readIdCode();
+      if (!expectedShapeshifter(id)) throw new Error(`Canceled: wrong FPGA ${formatIdCode(id)}.`);
+      setStatus("Loading the volatile read-only flash service …");
+      const response = await fetch(new URL("bridges/spiOverJtag_ep4ce2217.rbf", document.baseURI));
+      if (!response.ok) throw new Error("The read-only flash service could not be prepared.");
+      await jtag.loadSpiBridge(new Uint8Array(await response.arrayBuffer()), (fraction) => setFirmwareProgress(fraction * 35));
+      bridgeLoaded = true;
+      const siliconId = await jtag.readEpcsSiliconId();
+      const addresses = [0, 0x200000, 0x400000, 0x600000];
+      setStatus("Reading small samples at 0, 2, 4, and 6 MB twice …");
+      const first: Uint8Array[] = [];
+      const second: Uint8Array[] = [];
+      for (let i = 0; i < addresses.length; i++) {
+        first.push(await jtag.readFlash(addresses[i], 0x1000));
+        setFirmwareProgress(35 + ((i + 1) / 8) * 55);
+      }
+      for (let i = 0; i < addresses.length; i++) {
+        second.push(await jtag.readFlash(addresses[i], 0x1000));
+        setFirmwareProgress(35 + ((i + 5) / 8) * 55);
+      }
+      if (!first.every((block, index) => equalBytes(block, second[index]))) {
+        throw new Error("Capacity probe reads were not repeatable. Nothing was written.");
+      }
+      const mirrorsAtTwoMb = first.slice(1).every((block) => equalBytes(block, first[0]));
+      const result = mirrorsAtTwoMb
+        ? `Flash ID 0x${siliconId.toString(16).padStart(2, "0")}; addresses above 2 MB mirror the beginning, consistent with a 2 MB device.`
+        : `Flash ID 0x${siliconId.toString(16).padStart(2, "0")}; addresses above 2 MB contain distinct data, consistent with an 8 MB device.`;
+      await jtag.restartFromFlash();
+      bridgeLoaded = false;
+      setFirmwareProgress(100);
+      setFlashCapacityResult(result);
+      setStatus(`Read-only capacity test complete: ${result} No flash write was performed.`);
+    } catch (error) {
+      if (bridgeLoaded && jtag) {
+        try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
+      }
+      setUsbError(error instanceof Error ? error.message : "Read-only capacity test failed.");
+    } finally {
+      try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
+      try { if (device?.opened) await device.close(); } catch {}
+      setJtagBusy(false);
+    }
+  }
+
+  async function recoverFullFlash() {
+    if (!fullRecoveryBackup) return;
+    setUsbError("");
+    setJtagBusy(true);
+    setFullRecoveryConfirmation("");
+    setFirmwareProgress(0);
+    let device: any = null;
+    let interfaceNumber = 0;
+    let jtag: UsbBlasterJtag | null = null;
+    try {
+      const session = await openJtagSession();
+      ({ device, interfaceNumber, jtag } = session);
+      setStatus("Verifying the Shapeshifter and loading the volatile recovery service …");
+      await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      await restoreFullFlashBackup(jtag, fullRecoveryBackup.bytes, reportFirmwareProgress);
+      setFirmwareProgress(100);
+      setJtagId("");
+      setFullRecoveryBackup(null);
+      setStatus("Recovery complete: the full 8 MB physical flash matches the original backup byte-for-byte, and the Shapeshifter restarted.");
+    } catch (error) {
+      setUsbError(error instanceof Error ? error.message : "Full-flash recovery failed.");
+    } finally {
+      // A failed recovery is deliberately left in the volatile bridge so the
+      // user can reconnect and retry without booting an unverified flash.
+      try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
+      try { if (device?.opened) await device.close(); } catch {}
+      setJtagBusy(false);
+    }
+  }
+
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     void loadAudioFiles(Array.from(event.dataTransfer.files));
@@ -695,10 +1051,10 @@ export default function ShapeshifterStudio() {
           </div>
 
           <div className="controls-row">
-            <label>Bank slot<select value={bankSlot} onChange={(event) => { setBankSlot(Number(event.target.value)); setPatched(null); setBackup(null); setWriteReviewOpen(false); }}>
+            <label>Bank slot<select value={bankSlot} onChange={(event) => { setBankSlot(Number(event.target.value)); setBackup(null); setWriteReviewOpen(false); }}>
               {Array.from({ length: BANK_COUNT }, (_, index) => <option key={index} value={index}>{String(index + 1).padStart(3, "0")}</option>)}
             </select></label>
-            <label>Display name<input value={bankName} maxLength={6} onChange={(event) => { setBankName(event.target.value.toUpperCase()); setPatched(null); }} /></label>
+            <label>Display name<input value={bankName} maxLength={6} onChange={(event) => setBankName(event.target.value.toUpperCase())} /></label>
           </div>
         </div>
 
@@ -753,6 +1109,45 @@ export default function ShapeshifterStudio() {
             <div><button type="button" onClick={() => setWriteReviewOpen(false)}>Cancel</button><button className="confirm-write" type="button" disabled={writeConfirmation !== `WRITE SLOT ${bankSlot + 1}`} onClick={writeBankToFlash}>Write now</button></div>
           </div>}
           {writeProgress > 0 && writeProgress < 100 && <div className="write-progress" aria-label={`Writing ${Math.round(writeProgress)} percent`}><i style={{ width: `${writeProgress}%` }} /></div>}
+          {jtagId && <details className="emergency-tools">
+            <summary>Firmware test &amp; full-flash recovery</summary>
+            <div className="emergency-body">
+              <p>This is separate from safe bank writing. This DE0-Nano revision has an 8 MB EPCS64. A test reads all 8 MB twice and saves that physical-flash backup, then writes only populated sectors from the official JIC. Blank/unassigned JIC sectors and the upper flash are preserved byte-for-byte.</p>
+              <button className="wide secondary" type="button" disabled={jtagBusy} onClick={() => void probeFlashCapacityReadOnly()}>Probe flash capacity — read-only</button>
+              {flashCapacityResult && <div className="full-flash-file"><b>✓ Capacity probe completed</b><small>{flashCapacityResult}</small></div>}
+              <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void createReadOnlyFullFlashBackup()}>Read twice &amp; download full 8 MB backup — no flash write</button>
+              {fullFlashBackupName && <div className="full-flash-file"><b>✓ Read-only full-flash backup verified</b><small>{fullFlashBackupName} · two matching reads · no flash write</small></div>}
+              <input ref={officialFirmwareInput} type="file" hidden onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.currentTarget.value = "";
+                if (file) void loadOfficialFirmware(file);
+              }} />
+              <button className="wide secondary" type="button" disabled={jtagBusy} onClick={() => officialFirmwareInput.current?.click()}>{officialFirmware ? "Choose different official JIC" : "Choose official Shapeshifter JIC"}</button>
+              {officialFirmware && <div className="full-flash-file"><b>✓ Official JIC validated</b><small>{officialFirmware.filename} · {officialFirmware.programmedSectors.length} populated sectors in the 2 MB region</small></div>}
+              {officialFirmware && <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void runFirmwareDryRun()}>Compare JIC with full flash — read-only dry run</button>}
+              {firmwareDryRunResult && <div className="full-flash-file"><b>✓ Firmware dry run completed</b><small>{firmwareDryRunResult}</small></div>}
+              {officialFirmware && <div className="firmware-review">
+                <b>⚠ Full firmware test</b>
+                <p>The test first reads all 8 MB twice and saves the matching backup. It then writes only changed populated JIC sectors and verifies the complete physical flash before restart.</p>
+                <label>Type exactly to unlock<input value={firmwareConfirmation} onChange={(event) => setFirmwareConfirmation(event.target.value)} placeholder="TEST FULL FIRMWARE" autoComplete="off" /></label>
+                <div><button type="button" onClick={() => setOfficialFirmware(null)}>Cancel</button><button className="confirm-firmware" type="button" disabled={!FIRMWARE_WRITES_ENABLED || jtagBusy || firmwareConfirmation !== "TEST FULL FIRMWARE"} onClick={() => void testOfficialFirmware()}>Run verified firmware test</button></div>
+              </div>}
+
+              <input ref={fullRecoveryInput} type="file" accept=".bin,application/octet-stream" hidden onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.currentTarget.value = "";
+                if (file) void loadFullRecoveryBackup(file);
+              }} />
+              <button className="wide full-recovery-button" type="button" disabled={jtagBusy} onClick={() => fullRecoveryInput.current?.click()}>Load pre-test full-flash dump for recovery</button>
+              {fullRecoveryBackup && <div className="firmware-review recovery">
+                <b>Full-flash recovery: {fullRecoveryBackup.filename}</b>
+                <p>Only the original first 32 sectors are restored; the upper 6 MB are never written. Verification then compares all 8 MB byte-for-byte only with this original backup—not with an official firmware image.</p>
+                <label>Type exactly to unlock<input value={fullRecoveryConfirmation} onChange={(event) => setFullRecoveryConfirmation(event.target.value)} placeholder="RECOVER ORIGINAL FLASH" autoComplete="off" /></label>
+                <div><button type="button" onClick={() => setFullRecoveryBackup(null)}>Cancel</button><button className="confirm-recovery" type="button" disabled={jtagBusy || fullRecoveryConfirmation !== "RECOVER ORIGINAL FLASH"} onClick={() => void recoverFullFlash()}>Recover &amp; verify</button></div>
+              </div>}
+              {firmwareProgress > 0 && firmwareProgress < 100 && <div className="firmware-progress" aria-label={`Firmware operation ${Math.round(firmwareProgress)} percent`}><i style={{ width: `${firmwareProgress}%` }} /></div>}
+            </div>
+          </details>}
         </div>
         <div className="status-line" aria-live="polite"><span />{status}</div>
         </section>

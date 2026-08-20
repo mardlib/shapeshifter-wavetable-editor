@@ -103,6 +103,27 @@ select:focus,input:focus { border-color:var(--yellow); }
 .write-review .confirm-write { color:#171813; background:#ffd84a; border-color:#ffd84a; font-weight:800; }
 .write-progress { height:4px; margin-top:8px; background:#0c0f12; overflow:hidden; }
 .write-progress i { display:block; height:100%; background:#ffd84a; transition:width .18s ease; }
+.emergency-tools { margin-top:10px; border-top:1px solid #4d382e; }
+.emergency-tools summary { padding:10px 0 3px; cursor:pointer; color:#d49a76; font:8px var(--font-geist-mono); text-transform:uppercase; letter-spacing:.08em; }
+.emergency-body>p { color:#a78f81; font-size:9px; line-height:1.5; }
+.full-flash-file { margin-top:7px; padding:9px; border:1px solid #305743; background:#101a17; }
+.full-flash-file b,.full-flash-file small { display:block; }
+.full-flash-file b { color:#8dddb7; font-size:9px; }
+.full-flash-file small { margin-top:3px; color:#788b81; font-size:8px; overflow-wrap:anywhere; }
+.firmware-review { margin-top:8px; padding:10px; border:1px solid #7c4528; background:#21130e; }
+.firmware-review>b { color:#ff9e66; font-size:9px; overflow-wrap:anywhere; }
+.firmware-review p { color:#c2a18d; font-size:8px; line-height:1.5; }
+.firmware-review>div { display:flex; gap:6px; margin-top:8px; }
+.firmware-review button { flex:1; padding:8px; border:1px solid #67432f; color:#c5a38e; background:transparent; font:8px var(--font-geist-mono); }
+.firmware-review .confirm-firmware,.firmware-review .confirm-recovery { color:#1a100b; background:#ff9e66; border-color:#ff9e66; font-weight:800; }
+.firmware-review.recovery { border-color:#3d5873; background:#101820; }
+.firmware-review.recovery>b { color:#9fc3ef; }
+.firmware-review.recovery p { color:#91a2b5; }
+.firmware-review.recovery .confirm-recovery { color:#0d1720; background:#8dbdff; border-color:#8dbdff; }
+.full-recovery-button { color:#9fc3ef; background:#121b24; border:1px solid #30465c; }
+.read-only-backup-button { color:#8dddb7; background:#101a17; border:1px solid #305743; }
+.firmware-progress { height:4px; margin-top:8px; background:#0c0f12; overflow:hidden; }
+.firmware-progress i { display:block; height:100%; background:#ff9e66; transition:width .18s ease; }
 .flash-lock { margin-top:14px; display:flex; gap:10px; color:#818a95; background:#101318; border:1px solid #282e36; padding:12px; }
 .flash-lock.passed { color:#8dddb7; border-color:#305743; background:#101a17; }
 .flash-lock b,.flash-lock small { display:block; }

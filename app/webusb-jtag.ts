@@ -4,6 +4,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- WebUSB is not part of the standard TypeScript DOM declarations. */
 
+import { usbBlasterReadRequestLength } from "./usb-blaster-core";
+
 export const SHAPESHIFTER_IDCODE = 0x020f30dd;
 
 type TapState =
@@ -103,7 +105,7 @@ export class UsbBlasterJtag {
     let attempts = 0;
     while (payload.length < length && attempts++ < 2000) {
       const remaining = length - payload.length;
-      const requestLength = Math.min(16384, remaining + Math.ceil(remaining / 62) * 2 + 2);
+      const requestLength = usbBlasterReadRequestLength(remaining);
       const result = await Promise.race([
         this.device.transferIn(this.inEndpoint, requestLength),
         new Promise<never>((_, reject) => window.setTimeout(
@@ -151,10 +153,9 @@ export class UsbBlasterJtag {
     while (offset < byteLength) {
       const batchStart = offset;
       const commands: number[] = [];
-      // USB-Blaster I has a small FT245 receive FIFO. When reading, submit one
-      // shift command (max. 63 bytes) and drain it immediately; batching many
-      // read commands can fill the FIFO and stall transferIn indefinitely.
-      const commandBudget = read ? 64 : 12000;
+      // Queue the USB read before submitting batched shift commands. This lets
+      // the host drain the small FT245 receive FIFO while JTAG data arrives.
+      const commandBudget = 12000;
       while (offset < byteLength && commands.length < commandBudget) {
         const length = Math.min(63, byteLength - offset);
         commands.push(DO_SHIFT | (read ? DO_READ : 0) | length);
@@ -162,8 +163,13 @@ export class UsbBlasterJtag {
         else for (let i = 0; i < length; i++) commands.push(0);
         offset += length;
       }
-      await this.write(new Uint8Array(commands));
-      if (result) result.set(await this.readPayload(offset - batchStart), batchStart);
+      if (result) {
+        const readPromise = this.readPayload(offset - batchStart);
+        const [, payload] = await Promise.all([this.write(new Uint8Array(commands)), readPromise]);
+        result.set(payload, batchStart);
+      } else {
+        await this.write(new Uint8Array(commands));
+      }
     }
     return result;
   }
@@ -305,8 +311,15 @@ export class UsbBlasterJtag {
 
   async readEpcsSiliconId() {
     // EPCS1/4/16/64: 0xAB followed by three dummy bytes, then the ID.
-    const response = await this.spiTransfer(0xab, new Uint8Array(4), 4);
-    return response[3];
+    const ids: number[] = [];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const response = await this.spiTransfer(0xab, new Uint8Array(4), 4);
+      ids.push(response[3]);
+    }
+    if (!ids.every((id) => id === ids[0])) {
+      throw new Error(`Unstable EPCS silicon ID reads: ${ids.map((id) => `0x${id.toString(16).padStart(2, "0")}`).join(", ")}.`);
+    }
+    return ids[0];
   }
 
   async writeFlashSector(address: number, data: Uint8Array, onProgress?: (fraction: number) => void) {
