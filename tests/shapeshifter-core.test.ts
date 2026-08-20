@@ -8,7 +8,9 @@ import {
 } from "../app/shapeshifter-core.ts";
 import type { FirmwareImage } from "../app/shapeshifter-core.ts";
 import {
+  EPCS16_FLASH_SIZE,
   FLASH_SECTOR_SIZE,
+  flashSizeForEpcsSiliconId,
   PHYSICAL_FLASH_SIZE,
   restoreFullFlashBackup,
   runSafeFirmwareUpdate,
@@ -39,6 +41,12 @@ test("USB-Blaster reads always reserve complete 64-byte FTDI packets", () => {
   assert.equal(usbBlasterReadRequestLength(4), 64);
   assert.equal(usbBlasterReadRequestLength(62), 64);
   assert.equal(usbBlasterReadRequestLength(63), 128);
+});
+
+test("detects older 2 MB and newer 8 MB DE0-Nano flash chips", () => {
+  assert.equal(flashSizeForEpcsSiliconId(0x14), EPCS16_FLASH_SIZE);
+  assert.equal(flashSizeForEpcsSiliconId(0x16), PHYSICAL_FLASH_SIZE);
+  assert.throws(() => flashSizeForEpcsSiliconId(0x15), /Unsupported flash chip/);
 });
 
 class FakeFlash {
@@ -139,6 +147,23 @@ test("an already installed FPGA configuration performs no flash write", async ()
   assert.equal(device.writes, 0);
   assert.equal(device.restarts, 1);
   assert.deepEqual(device.bytes, original);
+});
+
+test("safe update backs up and verifies an older 2 MB flash completely", async () => {
+  const original = new Uint8Array(EPCS16_FLASH_SIZE).fill(0x24);
+  const firmware = new Uint8Array(FIRMWARE_SIZE).fill(0x91);
+  const device = new FakeFlash(original);
+  const result = await runSafeFirmwareUpdate(
+    device,
+    jicImage(firmware, [0, 15]),
+    async () => {},
+    undefined,
+    EPCS16_FLASH_SIZE,
+  );
+  assert.equal(result.backup.length, EPCS16_FLASH_SIZE);
+  assert.equal(device.bytes.length, EPCS16_FLASH_SIZE);
+  assert.equal(device.writes, 2);
+  assert.equal(device.restarts, 1);
 });
 
 test("update verify failure restores and verifies the original full flash", async () => {

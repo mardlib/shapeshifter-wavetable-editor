@@ -20,7 +20,8 @@ import type { FirmwareImage } from "./shapeshifter-core";
 import {
   createJicProgrammingTarget,
   createVerifiedFullFlashBackup,
-  FLASH_SECTOR_SIZE,
+  EPCS16_FLASH_SIZE,
+  flashSizeForEpcsSiliconId,
   FirmwareStage,
   FirmwareUpdateError,
   PHYSICAL_FLASH_SIZE,
@@ -189,7 +190,6 @@ export default function ShapeshifterStudio() {
   const [fullRecoveryConfirmation, setFullRecoveryConfirmation] = useState("");
   const [firmwareProgress, setFirmwareProgress] = useState(0);
   const [fullFlashBackupName, setFullFlashBackupName] = useState("");
-  const [flashCapacityResult, setFlashCapacityResult] = useState("");
   const [firmwareDryRunResult, setFirmwareDryRunResult] = useState("");
   const [webUsbAvailable, setWebUsbAvailable] = useState(false);
   const audioInput = useRef<HTMLInputElement>(null);
@@ -684,7 +684,7 @@ export default function ShapeshifterStudio() {
       setOfficialFirmware({ ...parsed, filename: file.name });
       setFirmwareConfirmation("");
       setFirmwareProgress(0);
-      setStatus(`Validated ${file.name}: compatible EP4CE22/EPCS16 JIC with ${parsed.programmedSectors.length} populated sectors.`);
+      setStatus(`Official Shapeshifter firmware verified: ${file.name}.`);
     } catch (error) {
       setOfficialFirmware(null);
       setFirmwareConfirmation("");
@@ -696,13 +696,13 @@ export default function ShapeshifterStudio() {
     setUsbError("");
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      if (bytes.length !== PHYSICAL_FLASH_SIZE) {
-        throw new Error(`Recovery requires the exact ${PHYSICAL_FLASH_SIZE.toLocaleString("en-US")}-byte EPCS64 dump created before the test.`);
+      if (bytes.length !== EPCS16_FLASH_SIZE && bytes.length !== PHYSICAL_FLASH_SIZE) {
+        throw new Error("Choose the complete 2 MB or 8 MB backup created before the update.");
       }
       setFullRecoveryBackup({ bytes, filename: file.name });
       setFullRecoveryConfirmation("");
       setFirmwareProgress(0);
-      setStatus(`Full-flash recovery dump loaded: ${file.name}. It will be verified only against this same dump.`);
+      setStatus(`Safety copy loaded: ${file.name}. Recovery will be checked only against this same file.`);
     } catch (error) {
       setFullRecoveryBackup(null);
       setFullRecoveryConfirmation("");
@@ -718,22 +718,24 @@ export default function ShapeshifterStudio() {
     if (!response.ok) throw new Error("The full-flash service could not be prepared.");
     await jtag.loadSpiBridge(new Uint8Array(await response.arrayBuffer()), progress);
     const siliconId = await jtag.readEpcsSiliconId();
-    if (siliconId !== 0x16) {
-      throw new Error(`Canceled: this tested flow requires EPCS64 ID 0x16, read 0x${siliconId.toString(16).padStart(2, "0")}.`);
+    try {
+      return flashSizeForEpcsSiliconId(siliconId);
+    } catch (error) {
+      throw new Error(`Canceled: ${error instanceof Error ? error.message : "unsupported flash chip"}`);
     }
   }
 
   function reportFirmwareProgress(stage: FirmwareStage, fraction: number) {
     const ranges: Record<FirmwareStage, [number, number, string]> = {
-      "backup-read": [10, 23, "Reading the complete 8 MB physical flash backup (first pass) …"],
-      "backup-confirm": [23, 36, "Reading the complete flash again to verify the backup …"],
-      "backup-save": [36, 40, "Saving the verified full-flash backup before writing …"],
-      "update-write": [40, 75, "Writing only populated sectors specified by the JIC …"],
-      "update-verify": [75, 98, "Reading all 8 MB; verifying JIC sectors and preserved backup sectors …"],
-      "rollback-write": [40, 78, "Update error — restoring the original complete 2 MB region …"],
-      "rollback-verify": [78, 98, "Verifying recovery against the original full-flash backup …"],
-      "recovery-write": [10, 72, "Writing all 32 sectors from the selected full-flash backup …"],
-      "recovery-verify": [72, 98, "Reading all 8 MB and comparing with the selected physical-flash backup …"],
+      "backup-read": [10, 23, "Creating the safety copy (first read) …"],
+      "backup-confirm": [23, 36, "Checking the safety copy with a second read …"],
+      "backup-save": [36, 40, "Saving the verified safety copy …"],
+      "update-write": [40, 75, "Installing the changed firmware parts …"],
+      "update-verify": [75, 98, "Checking the complete flash before restart …"],
+      "rollback-write": [40, 78, "Update error — restoring the original firmware …"],
+      "rollback-verify": [78, 98, "Checking the restored safety copy …"],
+      "recovery-write": [10, 72, "Restoring the original firmware from the safety copy …"],
+      "recovery-verify": [72, 98, "Checking the complete restored flash …"],
       restart: [98, 100, "Verified byte-for-byte. Restarting the Shapeshifter from flash …"],
     };
     const [start, end, message] = ranges[stage];
@@ -749,7 +751,7 @@ export default function ShapeshifterStudio() {
       try {
         const handle = await picker({
           suggestedName: filename,
-          types: [{ description: "EPCS64 8 MB physical-flash dump", accept: { "application/octet-stream": [".bin"] } }],
+          types: [{ description: "Complete Shapeshifter safety copy", accept: { "application/octet-stream": [".bin"] } }],
         });
         return async (bytes: Uint8Array) => {
           const writable = await handle.createWritable();
@@ -764,7 +766,7 @@ export default function ShapeshifterStudio() {
     return async (bytes: Uint8Array) => {
       download(bytes, filename);
       if (!window.confirm(
-        `The 8 MB backup download “${filename}” was started. Confirm only after the file is safely stored. No firmware will be written otherwise.`,
+        `The safety-copy download “${filename}” was started. Confirm only after the file is safely stored. No firmware will be written otherwise.`,
       )) throw new Error("Firmware test canceled because permanent backup storage was not confirmed.");
     };
   }
@@ -799,20 +801,20 @@ export default function ShapeshifterStudio() {
     try {
       const session = await openJtagSession();
       ({ device, interfaceNumber, jtag } = session);
-      setStatus("Verifying the Shapeshifter and loading the volatile full-flash service …");
-      await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      setStatus("Preparing the Shapeshifter for the safe firmware update …");
+      const flashSize = await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
       bridgeLoaded = true;
       const progress = (stage: FirmwareStage, fraction: number) => {
         if (stage === "update-write") flashWriteAttempted = true;
         reportFirmwareProgress(stage, fraction);
       };
-      const result = await runSafeFirmwareUpdate(jtag, officialFirmware, persistBackup, progress);
+      const result = await runSafeFirmwareUpdate(jtag, officialFirmware, persistBackup, progress, flashSize);
       bridgeLoaded = false;
       setFirmwareProgress(100);
       setJtagId("");
       setStatus(result.changed
-        ? "The populated JIC sectors and all preserved backup sectors matched byte-for-byte. The Shapeshifter restarted."
-        : "All populated JIC sectors were already installed. No flash write was performed; the Shapeshifter restarted.");
+        ? "Firmware update verified completely. Personal data were preserved and the Shapeshifter restarted."
+        : "The selected firmware was already installed. Nothing was written; the Shapeshifter restarted.");
     } catch (error) {
       if (error instanceof FirmwareUpdateError && error.restarted) bridgeLoaded = false;
       if (bridgeLoaded && jtag && !flashWriteAttempted) {
@@ -843,20 +845,21 @@ export default function ShapeshifterStudio() {
       const session = await openJtagSession();
       ({ device, interfaceNumber, jtag } = session);
       setStatus("Verifying the Shapeshifter and loading the volatile read-only flash service …");
-      await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      const flashSize = await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
       bridgeLoaded = true;
       await createVerifiedFullFlashBackup(
         jtag,
         async (bytes) => download(bytes, filename),
         reportFirmwareProgress,
+        flashSize,
       );
-      setStatus("Both complete physical-flash reads match and the 8 MB dump was downloaded. Restarting from the unchanged flash …");
+      setStatus("Both complete flash reads match and the safety copy was downloaded. Restarting …");
       await jtag.restartFromFlash();
       bridgeLoaded = false;
       setFirmwareProgress(100);
       setFullFlashBackupName(filename);
       setJtagId("");
-      setStatus(`Read-only test complete: two matching 8 MB reads saved as ${filename}; no flash write was performed.`);
+      setStatus(`Safety copy complete: two matching reads saved as ${filename}; nothing was changed.`);
     } catch (error) {
       if (bridgeLoaded && jtag) {
         try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
@@ -883,83 +886,24 @@ export default function ShapeshifterStudio() {
       const session = await openJtagSession();
       ({ device, interfaceNumber, jtag } = session);
       setStatus("Loading the volatile read-only flash service …");
-      await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      const flashSize = await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
       bridgeLoaded = true;
-      setStatus("Dry run: reading all 8 MB; no erase or write commands are used …");
-      const current = await jtag.readFlash(0, PHYSICAL_FLASH_SIZE, (fraction) => setFirmwareProgress(10 + fraction * 80));
+      setStatus("Checking the installed firmware without changing anything …");
+      const current = await jtag.readFlash(0, flashSize, (fraction) => setFirmwareProgress(10 + fraction * 80));
       const { changedSectors } = createJicProgrammingTarget(officialFirmware, current);
-      const formatted = changedSectors.length
-        ? changedSectors.map((sector) => `0x${sector.toString(16).padStart(2, "0")}`).join(", ")
-        : "none";
-      const preserved = (PHYSICAL_FLASH_SIZE / FLASH_SECTOR_SIZE) - officialFirmware.programmedSectors.length;
       setStatus("Dry run complete. Restarting the Shapeshifter from the unchanged flash …");
       await jtag.restartFromFlash();
       bridgeLoaded = false;
       setFirmwareProgress(100);
-      setFirmwareDryRunResult(`${officialFirmware.programmedSectors.length} populated JIC sectors; ${changedSectors.length} would change (${formatted}); ${preserved} physical sectors would remain byte-for-byte unchanged.`);
+      setFirmwareDryRunResult(changedSectors.length
+        ? `${changedSectors.length} firmware areas need updating. All personal data and unused areas will remain unchanged.`
+        : "This firmware is already installed. No update is needed.");
       setStatus("Firmware dry run complete — no flash write was performed.");
     } catch (error) {
       if (bridgeLoaded && jtag) {
         try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
       }
       setUsbError(error instanceof Error ? error.message : "Firmware dry run failed.");
-    } finally {
-      try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
-      try { if (device?.opened) await device.close(); } catch {}
-      setJtagBusy(false);
-    }
-  }
-
-  async function probeFlashCapacityReadOnly() {
-    setUsbError("");
-    setFlashCapacityResult("");
-    setJtagBusy(true);
-    setFirmwareProgress(0);
-    let device: any = null;
-    let interfaceNumber = 0;
-    let jtag: UsbBlasterJtag | null = null;
-    let bridgeLoaded = false;
-    try {
-      const session = await openJtagSession();
-      ({ device, interfaceNumber, jtag } = session);
-      await jtag.readIdCode();
-      const id = await jtag.readIdCode();
-      if (!expectedShapeshifter(id)) throw new Error(`Canceled: wrong FPGA ${formatIdCode(id)}.`);
-      setStatus("Loading the volatile read-only flash service …");
-      const response = await fetch(new URL("bridges/spiOverJtag_ep4ce2217.rbf", document.baseURI));
-      if (!response.ok) throw new Error("The read-only flash service could not be prepared.");
-      await jtag.loadSpiBridge(new Uint8Array(await response.arrayBuffer()), (fraction) => setFirmwareProgress(fraction * 35));
-      bridgeLoaded = true;
-      const siliconId = await jtag.readEpcsSiliconId();
-      const addresses = [0, 0x200000, 0x400000, 0x600000];
-      setStatus("Reading small samples at 0, 2, 4, and 6 MB twice …");
-      const first: Uint8Array[] = [];
-      const second: Uint8Array[] = [];
-      for (let i = 0; i < addresses.length; i++) {
-        first.push(await jtag.readFlash(addresses[i], 0x1000));
-        setFirmwareProgress(35 + ((i + 1) / 8) * 55);
-      }
-      for (let i = 0; i < addresses.length; i++) {
-        second.push(await jtag.readFlash(addresses[i], 0x1000));
-        setFirmwareProgress(35 + ((i + 5) / 8) * 55);
-      }
-      if (!first.every((block, index) => equalBytes(block, second[index]))) {
-        throw new Error("Capacity probe reads were not repeatable. Nothing was written.");
-      }
-      const mirrorsAtTwoMb = first.slice(1).every((block) => equalBytes(block, first[0]));
-      const result = mirrorsAtTwoMb
-        ? `Flash ID 0x${siliconId.toString(16).padStart(2, "0")}; addresses above 2 MB mirror the beginning, consistent with a 2 MB device.`
-        : `Flash ID 0x${siliconId.toString(16).padStart(2, "0")}; addresses above 2 MB contain distinct data, consistent with an 8 MB device.`;
-      await jtag.restartFromFlash();
-      bridgeLoaded = false;
-      setFirmwareProgress(100);
-      setFlashCapacityResult(result);
-      setStatus(`Read-only capacity test complete: ${result} No flash write was performed.`);
-    } catch (error) {
-      if (bridgeLoaded && jtag) {
-        try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
-      }
-      setUsbError(error instanceof Error ? error.message : "Read-only capacity test failed.");
     } finally {
       try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
       try { if (device?.opened) await device.close(); } catch {}
@@ -980,12 +924,15 @@ export default function ShapeshifterStudio() {
       const session = await openJtagSession();
       ({ device, interfaceNumber, jtag } = session);
       setStatus("Verifying the Shapeshifter and loading the volatile recovery service …");
-      await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      const flashSize = await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      if (fullRecoveryBackup.bytes.length !== flashSize) {
+        throw new Error("This safety copy belongs to a different flash size. Nothing was changed.");
+      }
       await restoreFullFlashBackup(jtag, fullRecoveryBackup.bytes, reportFirmwareProgress);
       setFirmwareProgress(100);
       setJtagId("");
       setFullRecoveryBackup(null);
-      setStatus("Recovery complete: the full 8 MB physical flash matches the original backup byte-for-byte, and the Shapeshifter restarted.");
+      setStatus("Recovery complete: the complete flash matches the safety copy, and the Shapeshifter restarted.");
     } catch (error) {
       setUsbError(error instanceof Error ? error.message : "Full-flash recovery failed.");
     } finally {
@@ -1110,27 +1057,25 @@ export default function ShapeshifterStudio() {
           </div>}
           {writeProgress > 0 && writeProgress < 100 && <div className="write-progress" aria-label={`Writing ${Math.round(writeProgress)} percent`}><i style={{ width: `${writeProgress}%` }} /></div>}
           {jtagId && <details className="emergency-tools">
-            <summary>Firmware test &amp; full-flash recovery</summary>
+            <summary>Firmware update &amp; recovery</summary>
             <div className="emergency-body">
-              <p>This is separate from safe bank writing. This DE0-Nano revision has an 8 MB EPCS64. A test reads all 8 MB twice and saves that physical-flash backup, then writes only populated sectors from the official JIC. Blank/unassigned JIC sectors and the upper flash are preserved byte-for-byte.</p>
-              <button className="wide secondary" type="button" disabled={jtagBusy} onClick={() => void probeFlashCapacityReadOnly()}>Probe flash capacity — read-only</button>
-              {flashCapacityResult && <div className="full-flash-file"><b>✓ Capacity probe completed</b><small>{flashCapacityResult}</small></div>}
-              <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void createReadOnlyFullFlashBackup()}>Read twice &amp; download full 8 MB backup — no flash write</button>
-              {fullFlashBackupName && <div className="full-flash-file"><b>✓ Read-only full-flash backup verified</b><small>{fullFlashBackupName} · two matching reads · no flash write</small></div>}
+              <p>The app detects older and newer Shapeshifter flash chips automatically. Before an update it creates and checks a complete safety copy, changes only the necessary firmware areas, and verifies everything before restart.</p>
+              <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void createReadOnlyFullFlashBackup()}>Create complete safety copy — no changes</button>
+              {fullFlashBackupName && <div className="full-flash-file"><b>✓ Safety copy verified</b><small>{fullFlashBackupName} · two matching reads · nothing changed</small></div>}
               <input ref={officialFirmwareInput} type="file" hidden onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.currentTarget.value = "";
                 if (file) void loadOfficialFirmware(file);
               }} />
-              <button className="wide secondary" type="button" disabled={jtagBusy} onClick={() => officialFirmwareInput.current?.click()}>{officialFirmware ? "Choose different official JIC" : "Choose official Shapeshifter JIC"}</button>
-              {officialFirmware && <div className="full-flash-file"><b>✓ Official JIC validated</b><small>{officialFirmware.filename} · {officialFirmware.programmedSectors.length} populated sectors in the 2 MB region</small></div>}
-              {officialFirmware && <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void runFirmwareDryRun()}>Compare JIC with full flash — read-only dry run</button>}
-              {firmwareDryRunResult && <div className="full-flash-file"><b>✓ Firmware dry run completed</b><small>{firmwareDryRunResult}</small></div>}
+              <button className="wide secondary" type="button" disabled={jtagBusy} onClick={() => officialFirmwareInput.current?.click()}>{officialFirmware ? "Choose different firmware file" : "Choose official Shapeshifter firmware"}</button>
+              {officialFirmware && <div className="full-flash-file"><b>✓ Official firmware verified</b><small>{officialFirmware.filename}</small></div>}
+              {officialFirmware && <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void runFirmwareDryRun()}>Check what the update would change — read only</button>}
+              {firmwareDryRunResult && <div className="full-flash-file"><b>✓ Update check completed</b><small>{firmwareDryRunResult}</small></div>}
               {officialFirmware && <div className="firmware-review">
-                <b>⚠ Full firmware test</b>
-                <p>The test first reads all 8 MB twice and saves the matching backup. It then writes only changed populated JIC sectors and verifies the complete physical flash before restart.</p>
+                <b>⚠ Firmware update</b>
+                <p>A fresh complete safety copy is saved first. The app then installs only the necessary changes and checks the complete flash before restarting.</p>
                 <label>Type exactly to unlock<input value={firmwareConfirmation} onChange={(event) => setFirmwareConfirmation(event.target.value)} placeholder="TEST FULL FIRMWARE" autoComplete="off" /></label>
-                <div><button type="button" onClick={() => setOfficialFirmware(null)}>Cancel</button><button className="confirm-firmware" type="button" disabled={!FIRMWARE_WRITES_ENABLED || jtagBusy || firmwareConfirmation !== "TEST FULL FIRMWARE"} onClick={() => void testOfficialFirmware()}>Run verified firmware test</button></div>
+                <div><button type="button" onClick={() => setOfficialFirmware(null)}>Cancel</button><button className="confirm-firmware" type="button" disabled={!FIRMWARE_WRITES_ENABLED || jtagBusy || firmwareConfirmation !== "TEST FULL FIRMWARE"} onClick={() => void testOfficialFirmware()}>Update firmware safely</button></div>
               </div>}
 
               <input ref={fullRecoveryInput} type="file" accept=".bin,application/octet-stream" hidden onChange={(event) => {
@@ -1138,10 +1083,10 @@ export default function ShapeshifterStudio() {
                 event.currentTarget.value = "";
                 if (file) void loadFullRecoveryBackup(file);
               }} />
-              <button className="wide full-recovery-button" type="button" disabled={jtagBusy} onClick={() => fullRecoveryInput.current?.click()}>Load pre-test full-flash dump for recovery</button>
+              <button className="wide full-recovery-button" type="button" disabled={jtagBusy} onClick={() => fullRecoveryInput.current?.click()}>Restore a complete safety copy</button>
               {fullRecoveryBackup && <div className="firmware-review recovery">
-                <b>Full-flash recovery: {fullRecoveryBackup.filename}</b>
-                <p>Only the original first 32 sectors are restored; the upper 6 MB are never written. Verification then compares all 8 MB byte-for-byte only with this original backup—not with an official firmware image.</p>
+                <b>Restore original state: {fullRecoveryBackup.filename}</b>
+                <p>The saved firmware area is restored and the complete device is then checked against this same safety copy. Personal data in the backup are preserved exactly.</p>
                 <label>Type exactly to unlock<input value={fullRecoveryConfirmation} onChange={(event) => setFullRecoveryConfirmation(event.target.value)} placeholder="RECOVER ORIGINAL FLASH" autoComplete="off" /></label>
                 <div><button type="button" onClick={() => setFullRecoveryBackup(null)}>Cancel</button><button className="confirm-recovery" type="button" disabled={jtagBusy || fullRecoveryConfirmation !== "RECOVER ORIGINAL FLASH"} onClick={() => void recoverFullFlash()}>Recover &amp; verify</button></div>
               </div>}

@@ -1,9 +1,16 @@
 import type { FirmwareImage } from "./shapeshifter-core";
 
 export const FIRMWARE_REGION_SIZE = 2 * 1024 * 1024;
+export const EPCS16_FLASH_SIZE = FIRMWARE_REGION_SIZE;
 export const PHYSICAL_FLASH_SIZE = 8 * 1024 * 1024;
 export const FLASH_SECTOR_SIZE = 0x10000;
 export const FIRMWARE_SECTOR_COUNT = FIRMWARE_REGION_SIZE / FLASH_SECTOR_SIZE;
+
+export function flashSizeForEpcsSiliconId(siliconId: number) {
+  if (siliconId === 0x14) return EPCS16_FLASH_SIZE;
+  if (siliconId === 0x16) return PHYSICAL_FLASH_SIZE;
+  throw new Error(`Unsupported flash chip (ID 0x${siliconId.toString(16).padStart(2, "0")}).`);
+}
 
 export type FullFlashDevice = {
   readFlash(address: number, length: number, onProgress?: (fraction: number) => void): Promise<Uint8Array>;
@@ -49,14 +56,16 @@ function requireFirmwareImage(image: Uint8Array, label: string) {
   }
 }
 
-function requirePhysicalFlashBackup(image: Uint8Array, label: string) {
-  if (image.length !== PHYSICAL_FLASH_SIZE) {
-    throw new Error(`${label} must be exactly ${PHYSICAL_FLASH_SIZE.toLocaleString("en-US")} bytes.`);
+function requirePhysicalFlashBackup(image: Uint8Array, label: string, expectedSize?: number) {
+  if ((image.length !== EPCS16_FLASH_SIZE && image.length !== PHYSICAL_FLASH_SIZE)
+    || (expectedSize !== undefined && image.length !== expectedSize)) {
+    const expected = expectedSize ?? `${EPCS16_FLASH_SIZE.toLocaleString("en-US")} or ${PHYSICAL_FLASH_SIZE.toLocaleString("en-US")}`;
+    throw new Error(`${label} must be exactly ${typeof expected === "number" ? expected.toLocaleString("en-US") : expected} bytes.`);
   }
 }
 
-async function readPhysicalFlash(device: FullFlashDevice, onProgress?: (fraction: number) => void) {
-  return device.readFlash(0, PHYSICAL_FLASH_SIZE, onProgress);
+async function readPhysicalFlash(device: FullFlashDevice, flashSize: number, onProgress?: (fraction: number) => void) {
+  return device.readFlash(0, flashSize, onProgress);
 }
 
 async function writeJicSectors(
@@ -117,13 +126,14 @@ export async function createVerifiedFullFlashBackup(
   device: FullFlashDevice,
   persist: (backup: Uint8Array) => Promise<void>,
   progress?: FirmwareProgress,
+  flashSize = PHYSICAL_FLASH_SIZE,
 ) {
   progress?.("backup-read", 0);
-  const firstRead = await readPhysicalFlash(device, (fraction) => progress?.("backup-read", fraction));
-  requirePhysicalFlashBackup(firstRead, "First physical-flash backup read");
+  const firstRead = await readPhysicalFlash(device, flashSize, (fraction) => progress?.("backup-read", fraction));
+  requirePhysicalFlashBackup(firstRead, "First physical-flash backup read", flashSize);
   progress?.("backup-confirm", 0);
-  const secondRead = await readPhysicalFlash(device, (fraction) => progress?.("backup-confirm", fraction));
-  requirePhysicalFlashBackup(secondRead, "Second physical-flash backup read");
+  const secondRead = await readPhysicalFlash(device, flashSize, (fraction) => progress?.("backup-confirm", fraction));
+  requirePhysicalFlashBackup(secondRead, "Second physical-flash backup read", flashSize);
   if (!equalBytes(firstRead, secondRead)) {
     throw new Error("Full-flash backup was read twice but the two reads differ. Nothing was written.");
   }
@@ -145,7 +155,7 @@ export async function restoreFullFlashBackup(
   progress?.("recovery-write", 0);
   await writeFirmwareRegion(device, backup.subarray(0, FIRMWARE_REGION_SIZE), (fraction) => progress?.("recovery-write", fraction));
   progress?.("recovery-verify", 0);
-  const readback = await readPhysicalFlash(device, (fraction) => progress?.("recovery-verify", fraction));
+  const readback = await readPhysicalFlash(device, backup.length, (fraction) => progress?.("recovery-verify", fraction));
   if (!equalBytes(readback, backup)) {
     throw new Error("Recovery verification failed: flash does not match the original full-flash backup.");
   }
@@ -159,9 +169,10 @@ export async function runSafeFirmwareUpdate(
   firmwareImage: FirmwareImage,
   persistBackup: (backup: Uint8Array) => Promise<void>,
   progress?: FirmwareProgress,
+  flashSize = PHYSICAL_FLASH_SIZE,
 ) {
   requireFirmwareImage(firmwareImage.bytes, "Firmware image");
-  const backup = await createVerifiedFullFlashBackup(device, persistBackup, progress);
+  const backup = await createVerifiedFullFlashBackup(device, persistBackup, progress, flashSize);
   const { target, changedSectors } = createJicProgrammingTarget(firmwareImage, backup);
   const changed = changedSectors.length > 0;
 
@@ -170,7 +181,7 @@ export async function runSafeFirmwareUpdate(
       progress?.("update-write", 0);
       await writeJicSectors(device, firmwareImage, changedSectors, (fraction) => progress?.("update-write", fraction));
       progress?.("update-verify", 0);
-      const readback = await readPhysicalFlash(device, (fraction) => progress?.("update-verify", fraction));
+      const readback = await readPhysicalFlash(device, backup.length, (fraction) => progress?.("update-verify", fraction));
       if (!equalBytes(readback, target)) {
         throw new Error("Firmware verification failed: programmed JIC sectors or preserved backup sectors do not match.");
       }
@@ -180,7 +191,7 @@ export async function runSafeFirmwareUpdate(
       progress?.("rollback-write", 0);
       await writeFirmwareRegion(device, backup.subarray(0, FIRMWARE_REGION_SIZE), (fraction) => progress?.("rollback-write", fraction));
       progress?.("rollback-verify", 0);
-      const recoveryReadback = await readPhysicalFlash(device, (fraction) => progress?.("rollback-verify", fraction));
+      const recoveryReadback = await readPhysicalFlash(device, backup.length, (fraction) => progress?.("rollback-verify", fraction));
       if (!equalBytes(recoveryReadback, backup)) {
         throw new Error("automatic recovery readback does not match the original backup");
       }

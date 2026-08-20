@@ -33,7 +33,7 @@ does not require a firmware image or a platform-specific application.
 - Write and verify the selected bank, with automatic in-session rollback if a
   write check fails.
 - Run a guarded full-firmware test from a validated official Shapeshifter JIC:
-  read the complete 8 MB EPCS64 twice, save the fresh physical-flash dump,
+  detect the fitted 2 MB or 8 MB flash, read it twice, save the fresh complete dump,
   write only populated sectors specified by the JIC, verify them, confirm all
   omitted sectors still match the backup, and only then restart the FPGA.
 - Automatically restore and verify the original full-flash dump if the
@@ -90,23 +90,22 @@ The feature remains experimental and always requires a fresh persistent backup.
 The collapsed firmware section is independent of the normal bank workflow. It
 accepts an official Shapeshifter `.jic` only after its Quartus, EP4CE22, EPCS16,
 payload-size, and payload-boundary fields have been validated. Immediately
-before every test, the app confirms the fitted EPCS64, reads all physical 8 MB
-twice, and requires that matching dump to be saved outside browser memory
+before every test, the app detects the fitted EPCS16 or EPCS64, reads the complete
+physical flash twice, and requires that matching dump to be saved outside browser memory
 before the first erase/write. The official image remains 2 MB. Fully blank JIC
 sectors are treated as unassigned and preserved from the backup; populated JIC
-sectors are the only update targets. The rest of the physical 8 MB flash is
-also preserved.
+sectors are the only update targets. The rest of the physical flash is preserved.
 
 Two intentionally separate comparisons are used:
 
 - after an update, populated JIC sectors must equal the corresponding official
   bytes and every omitted sector must equal the pre-test backup before restart;
-- after automatic or manual recovery, all physical 8 MB must equal the
+- after automatic or manual recovery, the complete physical flash must equal the
   original pre-test dump byte-for-byte.
 
 The original dump is never compared with the new firmware image. It preserves
 the exact pre-test state, including existing wavetables, presets, calibration,
-and every other byte in the EPCS64. Keep it until the module has booted and its
+and every other byte in the fitted flash. Keep it until the module has booted and its
 hardware operation has been confirmed.
 
 ## Local development
