@@ -2,6 +2,13 @@
 
 [**Open the Shapeshifter Wavetable Bank Editor**](https://mardlib.github.io/shapeshifter-wavetable-editor/)
 
+**Current version: 0.2.2** · [Release notes](RELEASE_NOTES.md) · [All GitHub releases](https://github.com/mardlib/shapeshifter-wavetable-editor/releases)
+
+### What changed in 0.2.2
+
+- The firmware confirmation now clearly says `UPDATE FIRMWARE`.
+- The current version and release history are visible directly in this README.
+
 ![Shapeshifter Wavetable Bank Editor](docs/screenshot.jpg)
 
 A browser-based tool for creating and writing custom wavetable banks to an
@@ -32,7 +39,7 @@ does not require a firmware image or a platform-specific application.
   other seven banks stored in the same flash sector.
 - Write and verify the selected bank, with automatic in-session rollback if a
   write check fails.
-- Run a guarded full-firmware test from a validated official Shapeshifter JIC:
+- Run a guarded firmware update from a validated official Shapeshifter JIC:
   detect the fitted 2 MB or 8 MB flash, read it twice, save the fresh complete dump,
   write only populated sectors specified by the JIC, verify them, confirm all
   omitted sectors still match the backup, and only then restart the FPGA.
@@ -79,7 +86,7 @@ new bank has been tested. To restore it later, verify the Shapeshifter, choose
 confirmation phrase. The restore process copies only the bank and name recorded
 in the file, verifies both, and leaves neighboring banks unchanged.
 
-## Experimental firmware test and recovery
+## Experimental firmware update and recovery
 
 Hardware testing showed that treating the sparse JIC payload as a complete
 image can prevent boot. The corrected sparse-sector flow was subsequently
@@ -90,7 +97,7 @@ The feature remains experimental and always requires a fresh persistent backup.
 The collapsed firmware section is independent of the normal bank workflow. It
 accepts an official Shapeshifter `.jic` only after its Quartus, EP4CE22, EPCS16,
 payload-size, and payload-boundary fields have been validated. Immediately
-before every test, the app detects the fitted EPCS16 or EPCS64, reads the complete
+before every update, the app detects the fitted EPCS16 or EPCS64, reads the complete
 physical flash twice, and requires that matching dump to be saved outside browser memory
 before the first erase/write. The official image remains 2 MB. Fully blank JIC
 sectors are treated as unassigned and preserved from the backup; populated JIC

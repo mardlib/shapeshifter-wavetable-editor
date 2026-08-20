@@ -679,7 +679,7 @@ export default function ShapeshifterStudio() {
     try {
       const parsed = extractFirmwareImage(new Uint8Array(await file.arrayBuffer()));
       if (parsed.format !== "JIC") {
-        throw new Error("Firmware tests require an official Shapeshifter .jic file, not a raw image.");
+        throw new Error("Firmware updates require an official Shapeshifter .jic file, not a raw image.");
       }
       setOfficialFirmware({ ...parsed, filename: file.name });
       setFirmwareConfirmation("");
@@ -767,7 +767,7 @@ export default function ShapeshifterStudio() {
       download(bytes, filename);
       if (!window.confirm(
         `The safety-copy download “${filename}” was started. Confirm only after the file is safely stored. No firmware will be written otherwise.`,
-      )) throw new Error("Firmware test canceled because permanent backup storage was not confirmed.");
+      )) throw new Error("Firmware update canceled because permanent backup storage was not confirmed.");
     };
   }
 
@@ -785,7 +785,7 @@ export default function ShapeshifterStudio() {
       return;
     }
     if (!persistBackup) {
-      setStatus("Firmware test canceled before accessing the Shapeshifter. Nothing was changed.");
+      setStatus("Firmware update canceled before accessing the Shapeshifter. Nothing was changed.");
       return;
     }
 
@@ -820,7 +820,7 @@ export default function ShapeshifterStudio() {
       if (bridgeLoaded && jtag && !flashWriteAttempted) {
         try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
       }
-      setUsbError(error instanceof Error ? error.message : "Safe firmware test failed.");
+      setUsbError(error instanceof Error ? error.message : "Safe firmware update failed.");
     } finally {
       // Never restart an incompletely written flash here. The transaction only
       // restarts after update verification or verified rollback.
@@ -1074,8 +1074,8 @@ export default function ShapeshifterStudio() {
               {officialFirmware && <div className="firmware-review">
                 <b>⚠ Firmware update</b>
                 <p>A fresh complete safety copy is saved first. The app then installs only the necessary changes and checks the complete flash before restarting.</p>
-                <label>Type exactly to unlock<input value={firmwareConfirmation} onChange={(event) => setFirmwareConfirmation(event.target.value)} placeholder="TEST FULL FIRMWARE" autoComplete="off" /></label>
-                <div><button type="button" onClick={() => setOfficialFirmware(null)}>Cancel</button><button className="confirm-firmware" type="button" disabled={!FIRMWARE_WRITES_ENABLED || jtagBusy || firmwareConfirmation !== "TEST FULL FIRMWARE"} onClick={() => void testOfficialFirmware()}>Update firmware safely</button></div>
+                <label>Type exactly to confirm<input value={firmwareConfirmation} onChange={(event) => setFirmwareConfirmation(event.target.value)} placeholder="UPDATE FIRMWARE" autoComplete="off" /></label>
+                <div><button type="button" onClick={() => setOfficialFirmware(null)}>Cancel</button><button className="confirm-firmware" type="button" disabled={!FIRMWARE_WRITES_ENABLED || jtagBusy || firmwareConfirmation !== "UPDATE FIRMWARE"} onClick={() => void testOfficialFirmware()}>Update firmware safely</button></div>
               </div>}
 
               <input ref={fullRecoveryInput} type="file" accept=".bin,application/octet-stream" hidden onChange={(event) => {

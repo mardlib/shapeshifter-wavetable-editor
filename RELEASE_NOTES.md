@@ -1,4 +1,11 @@
-# WavePort 0.2.1
+# WavePort 0.2.2
+
+## Clearer firmware confirmation and visible version history
+
+- Changes the firmware confirmation phrase from `TEST FULL FIRMWARE` to the clearer `UPDATE FIRMWARE`.
+- Shows the current version, latest changes, and release links prominently in the README.
+
+## WavePort 0.2.1
 
 ## Compatibility and clearer operation
 
