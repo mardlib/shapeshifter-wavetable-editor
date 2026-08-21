@@ -1,7 +1,7 @@
 {
   "name": "WavePort — Shapeshifter Wavetable Studio",
   "short_name": "WavePort",
-  "description": "Create, back up, and write Intellijel Shapeshifter wavetable banks offline.",
+  "description": "Create and write Shapeshifter wavetable banks, make complete backups, and install official JIC firmware locally.",
   "id": "./",
   "start_url": "./",
   "scope": "./",
