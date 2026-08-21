@@ -730,7 +730,7 @@ export default function ShapeshifterStudio() {
       "backup-read": [10, 23, "Creating the safety copy (first read) …"],
       "backup-confirm": [23, 36, "Checking the safety copy with a second read …"],
       "backup-save": [36, 40, "Saving the verified safety copy …"],
-      "update-write": [40, 75, "Installing the changed firmware parts …"],
+      "update-write": [40, 75, "Replacing the complete 2 MB firmware area …"],
       "update-verify": [75, 98, "Checking the complete flash before restart …"],
       "rollback-write": [40, 78, "Update error — restoring the original firmware …"],
       "rollback-verify": [78, 98, "Checking the restored safety copy …"],
