@@ -1,4 +1,13 @@
-# WavePort 0.2.2
+# WavePort 0.2.3
+
+## Firmware installation disabled
+
+- Removes firmware installation controls from the public interface.
+- Adds a hard runtime guard that prevents the experimental sparse-JIC writer from running.
+- Keeps complete read-only flash backup and exact byte-for-byte recovery available.
+- Directs firmware updates to the official Quartus Programmer until compatible JIC programming semantics are verified.
+
+## WavePort 0.2.2
 
 ## Clearer firmware confirmation and visible version history
 

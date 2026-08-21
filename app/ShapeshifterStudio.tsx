@@ -30,9 +30,9 @@ import {
 } from "./firmware-update";
 import { UsbBlasterJtag, expectedShapeshifter, formatIdCode } from "./webusb-jtag";
 
-// Hardware writes are exposed only through the verified sparse-JIC flow:
-// persistent double-read backup, changed populated sectors only, full readback.
-const FIRMWARE_WRITES_ENABLED = true;
+// Firmware installation is disabled until WavePort can reproduce and verify
+// the official Quartus JIC programming semantics. Full backup/recovery stays available.
+const FIRMWARE_WRITES_ENABLED = false;
 
 type UsbSummary = {
   product: string;
@@ -1057,26 +1057,29 @@ export default function ShapeshifterStudio() {
           </div>}
           {writeProgress > 0 && writeProgress < 100 && <div className="write-progress" aria-label={`Writing ${Math.round(writeProgress)} percent`}><i style={{ width: `${writeProgress}%` }} /></div>}
           {jtagId && <details className="emergency-tools">
-            <summary>Firmware update &amp; recovery</summary>
+            <summary>Full-flash backup &amp; recovery</summary>
             <div className="emergency-body">
-              <p>The app detects older and newer Shapeshifter flash chips automatically. Before an update it creates and checks a complete safety copy, changes only the necessary firmware areas, and verifies everything before restart.</p>
+              <p>Firmware installation is disabled while exact compatibility with the official Quartus programmer is being verified. Complete read-only backups and exact recovery remain available.</p>
               <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void createReadOnlyFullFlashBackup()}>Create complete safety copy — no changes</button>
               {fullFlashBackupName && <div className="full-flash-file"><b>✓ Safety copy verified</b><small>{fullFlashBackupName} · two matching reads · nothing changed</small></div>}
-              <input ref={officialFirmwareInput} type="file" hidden onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.currentTarget.value = "";
-                if (file) void loadOfficialFirmware(file);
-              }} />
-              <button className="wide secondary" type="button" disabled={jtagBusy} onClick={() => officialFirmwareInput.current?.click()}>{officialFirmware ? "Choose different firmware file" : "Choose official Shapeshifter firmware"}</button>
-              {officialFirmware && <div className="full-flash-file"><b>✓ Official firmware verified</b><small>{officialFirmware.filename}</small></div>}
-              {officialFirmware && <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void runFirmwareDryRun()}>Check what the update would change — read only</button>}
-              {firmwareDryRunResult && <div className="full-flash-file"><b>✓ Update check completed</b><small>{firmwareDryRunResult}</small></div>}
-              {officialFirmware && <div className="firmware-review">
-                <b>⚠ Firmware update</b>
-                <p>A fresh complete safety copy is saved first. The app then installs only the necessary changes and checks the complete flash before restarting.</p>
-                <label>Type exactly to confirm<input value={firmwareConfirmation} onChange={(event) => setFirmwareConfirmation(event.target.value)} placeholder="UPDATE FIRMWARE" autoComplete="off" /></label>
-                <div><button type="button" onClick={() => setOfficialFirmware(null)}>Cancel</button><button className="confirm-firmware" type="button" disabled={!FIRMWARE_WRITES_ENABLED || jtagBusy || firmwareConfirmation !== "UPDATE FIRMWARE"} onClick={() => void testOfficialFirmware()}>Update firmware safely</button></div>
-              </div>}
+              {!FIRMWARE_WRITES_ENABLED && <div className="full-flash-file"><b>Firmware installation unavailable</b><small>Use the official Quartus Programmer for firmware updates.</small></div>}
+              {FIRMWARE_WRITES_ENABLED && <>
+                <input ref={officialFirmwareInput} type="file" hidden onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.currentTarget.value = "";
+                  if (file) void loadOfficialFirmware(file);
+                }} />
+                <button className="wide secondary" type="button" disabled={jtagBusy} onClick={() => officialFirmwareInput.current?.click()}>{officialFirmware ? "Choose different firmware file" : "Choose official Shapeshifter firmware"}</button>
+                {officialFirmware && <div className="full-flash-file"><b>✓ Official firmware verified</b><small>{officialFirmware.filename}</small></div>}
+                {officialFirmware && <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void runFirmwareDryRun()}>Check what the update would change — read only</button>}
+                {firmwareDryRunResult && <div className="full-flash-file"><b>✓ Update check completed</b><small>{firmwareDryRunResult}</small></div>}
+                {officialFirmware && <div className="firmware-review">
+                  <b>⚠ Firmware update</b>
+                  <p>A fresh complete safety copy is saved first. The app then installs only the necessary changes and checks the complete flash before restarting.</p>
+                  <label>Type exactly to confirm<input value={firmwareConfirmation} onChange={(event) => setFirmwareConfirmation(event.target.value)} placeholder="UPDATE FIRMWARE" autoComplete="off" /></label>
+                  <div><button type="button" onClick={() => setOfficialFirmware(null)}>Cancel</button><button className="confirm-firmware" type="button" disabled={jtagBusy || firmwareConfirmation !== "UPDATE FIRMWARE"} onClick={() => void testOfficialFirmware()}>Update firmware safely</button></div>
+                </div>}
+              </>}
 
               <input ref={fullRecoveryInput} type="file" accept=".bin,application/octet-stream" hidden onChange={(event) => {
                 const file = event.target.files?.[0];

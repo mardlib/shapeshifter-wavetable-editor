@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -24,4 +25,14 @@ test("server-renders WavePort without the disposable starter preview", async () 
   assert.match(html, /Connect Shapeshifter/);
   assert.match(html, /Bank editor/);
   assert.doesNotMatch(html, /react-loading-skeleton|Your site is taking shape/);
+});
+
+test("firmware installation is disabled while backup and recovery remain available", async () => {
+  const source = await readFile(new URL("../app/ShapeshifterStudio.tsx", import.meta.url), "utf8");
+  assert.match(source, /const FIRMWARE_WRITES_ENABLED = false;/);
+  assert.match(source, /if \(!FIRMWARE_WRITES_ENABLED\)/);
+  assert.match(source, /Firmware installation unavailable/);
+  assert.match(source, /Use the official Quartus Programmer for firmware updates/);
+  assert.match(source, /Create complete safety copy — no changes/);
+  assert.match(source, /Restore a complete safety copy/);
 });
