@@ -32,7 +32,7 @@ import { UsbBlasterJtag, expectedShapeshifter, formatIdCode } from "./webusb-jta
 
 // Firmware installation is disabled until WavePort can reproduce and verify
 // the official Quartus JIC programming semantics. Full backup/recovery stays available.
-const FIRMWARE_WRITES_ENABLED = false;
+const FIRMWARE_WRITES_ENABLED = true;
 
 type UsbSummary = {
   product: string;
@@ -813,7 +813,7 @@ export default function ShapeshifterStudio() {
       setFirmwareProgress(100);
       setJtagId("");
       setStatus(result.changed
-        ? "Firmware update verified completely. Personal data were preserved and the Shapeshifter restarted."
+        ? "Complete 2 MB firmware image verified byte-for-byte. The Shapeshifter restarted."
         : "The selected firmware was already installed. Nothing was written; the Shapeshifter restarted.");
     } catch (error) {
       if (error instanceof FirmwareUpdateError && error.restarted) bridgeLoaded = false;
@@ -896,7 +896,7 @@ export default function ShapeshifterStudio() {
       bridgeLoaded = false;
       setFirmwareProgress(100);
       setFirmwareDryRunResult(changedSectors.length
-        ? `${changedSectors.length} firmware areas need updating. All personal data and unused areas will remain unchanged.`
+        ? `${changedSectors.length} of 32 sectors differ. Installation will replace the complete 2 MB firmware memory, including custom wavetables and other stored data.`
         : "This firmware is already installed. No update is needed.");
       setStatus("Firmware dry run complete — no flash write was performed.");
     } catch (error) {
@@ -1059,7 +1059,7 @@ export default function ShapeshifterStudio() {
           {jtagId && <details className="emergency-tools">
             <summary>Full-flash backup &amp; recovery</summary>
             <div className="emergency-body">
-              <p>Firmware installation is disabled while exact compatibility with the official Quartus programmer is being verified. Complete read-only backups and exact recovery remain available.</p>
+              <p>Local hardware test: installation writes the complete 2 MB image extracted from the selected official JIC. Custom wavetables and other data in that region will be replaced.</p>
               <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void createReadOnlyFullFlashBackup()}>Create complete safety copy — no changes</button>
               {fullFlashBackupName && <div className="full-flash-file"><b>✓ Safety copy verified</b><small>{fullFlashBackupName} · two matching reads · nothing changed</small></div>}
               {!FIRMWARE_WRITES_ENABLED && <div className="full-flash-file"><b>Firmware installation unavailable</b><small>Use the official Quartus Programmer for firmware updates.</small></div>}
@@ -1075,7 +1075,7 @@ export default function ShapeshifterStudio() {
                 {firmwareDryRunResult && <div className="full-flash-file"><b>✓ Update check completed</b><small>{firmwareDryRunResult}</small></div>}
                 {officialFirmware && <div className="firmware-review">
                   <b>⚠ Firmware update</b>
-                  <p>A fresh complete safety copy is saved first. The app then installs only the necessary changes and checks the complete flash before restarting.</p>
+                  <p>A fresh complete safety copy is saved first. The entire extracted 2 MB image is then written, including blank sectors, and checked byte-for-byte before restarting.</p>
                   <label>Type exactly to confirm<input value={firmwareConfirmation} onChange={(event) => setFirmwareConfirmation(event.target.value)} placeholder="UPDATE FIRMWARE" autoComplete="off" /></label>
                   <div><button type="button" onClick={() => setOfficialFirmware(null)}>Cancel</button><button className="confirm-firmware" type="button" disabled={jtagBusy || firmwareConfirmation !== "UPDATE FIRMWARE"} onClick={() => void testOfficialFirmware()}>Update firmware safely</button></div>
                 </div>}

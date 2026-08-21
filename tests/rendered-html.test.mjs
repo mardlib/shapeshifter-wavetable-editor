@@ -27,12 +27,11 @@ test("server-renders WavePort without the disposable starter preview", async () 
   assert.doesNotMatch(html, /react-loading-skeleton|Your site is taking shape/);
 });
 
-test("firmware installation is disabled while backup and recovery remain available", async () => {
+test("local hardware test uses the explicit complete-image firmware path", async () => {
   const source = await readFile(new URL("../app/ShapeshifterStudio.tsx", import.meta.url), "utf8");
-  assert.match(source, /const FIRMWARE_WRITES_ENABLED = false;/);
+  assert.match(source, /const FIRMWARE_WRITES_ENABLED = true;/);
   assert.match(source, /if \(!FIRMWARE_WRITES_ENABLED\)/);
-  assert.match(source, /Firmware installation unavailable/);
-  assert.match(source, /Use the official Quartus Programmer for firmware updates/);
+  assert.match(source, /entire extracted 2 MB image is then written, including blank sectors/);
   assert.match(source, /Create complete safety copy — no changes/);
   assert.match(source, /Restore a complete safety copy/);
 });

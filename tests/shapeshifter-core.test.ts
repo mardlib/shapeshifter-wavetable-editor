@@ -91,7 +91,7 @@ test("extracts a complete EPCS16 image from a validated Shapeshifter JIC", () =>
   assert.equal(result.programmedSectors.length, 32);
 });
 
-test("JIC extraction treats fully blank sectors as unassigned", () => {
+test("JIC extraction reports fully blank sectors as not populated", () => {
   const source = makeJic();
   const imageStart = 0x9b;
   source.fill(0xff, imageStart + 0x0b0000, imageStart + 0x0f0000);
@@ -106,10 +106,11 @@ test("rejects a JIC that does not identify the Shapeshifter FPGA", () => {
   assert.throws(() => extractFirmwareImage(source), /EP4CE22/);
 });
 
-test("safe update persists the old flash, verifies against the new image, then restarts", async () => {
+test("complete update persists the old flash, writes all 2 MB, verifies, then restarts", async () => {
   const original = new Uint8Array(PHYSICAL_FLASH_SIZE).fill(0x31);
   original.fill(0x5c, FIRMWARE_SIZE);
-  const firmware = new Uint8Array(FIRMWARE_SIZE).fill(0xa7);
+  const firmware = new Uint8Array(FIRMWARE_SIZE).fill(0xff);
+  firmware.fill(0xa7, 0, FLASH_SECTOR_SIZE);
   const programmedSectors = [0, 15, 16];
   const device = new FakeFlash(original);
   let persisted: Uint8Array | null = null;
@@ -121,24 +122,16 @@ test("safe update persists the old flash, verifies against the new image, then r
   assert.deepEqual(result.backup, original);
   assert.equal(result.changed, true);
   const expected = new Uint8Array(original);
-  for (const sector of programmedSectors) {
-    const start = sector * FLASH_SECTOR_SIZE;
-    expected.set(firmware.subarray(start, start + FLASH_SECTOR_SIZE), start);
-  }
+  expected.set(firmware, 0);
   assert.deepEqual(device.bytes, expected);
-  assert.deepEqual(device.bytes.subarray(FLASH_SECTOR_SIZE, 15 * FLASH_SECTOR_SIZE), original.subarray(FLASH_SECTOR_SIZE, 15 * FLASH_SECTOR_SIZE), "unassigned sectors must remain untouched");
-  assert.equal(device.writes, 3);
+  assert.equal(device.writes, 32);
   assert.equal(device.restarts, 1);
 });
 
 test("an already installed FPGA configuration performs no flash write", async () => {
   const original = new Uint8Array(PHYSICAL_FLASH_SIZE).fill(0x29);
-  const firmware = new Uint8Array(FIRMWARE_SIZE).fill(0x81);
+  const firmware = original.slice(0, FIRMWARE_SIZE);
   const programmedSectors = [0, 15];
-  for (const sector of programmedSectors) {
-    const start = sector * FLASH_SECTOR_SIZE;
-    firmware.set(original.subarray(start, start + FLASH_SECTOR_SIZE), start);
-  }
   const device = new FakeFlash(original);
   const result = await runSafeFirmwareUpdate(device, jicImage(firmware, programmedSectors), async (persisted) => {
     persisted.fill(0, 0, FLASH_SECTOR_SIZE);
@@ -162,7 +155,7 @@ test("safe update backs up and verifies an older 2 MB flash completely", async (
   );
   assert.equal(result.backup.length, EPCS16_FLASH_SIZE);
   assert.equal(device.bytes.length, EPCS16_FLASH_SIZE);
-  assert.equal(device.writes, 2);
+  assert.equal(device.writes, 32);
   assert.equal(device.restarts, 1);
 });
 
@@ -177,7 +170,7 @@ test("update verify failure restores and verifies the original full flash", asyn
     /original full-flash backup was automatically restored and verified/,
   );
   assert.deepEqual(device.bytes, original);
-  assert.equal(device.writes, 35);
+  assert.equal(device.writes, 64);
   assert.equal(device.restarts, 1, "restart is allowed only after rollback verification succeeds");
 });
 
@@ -217,15 +210,12 @@ test("restart failure after successful firmware verification does not trigger ro
   device.restartError = true;
   await assert.rejects(
     runSafeFirmwareUpdate(device, jicImage(firmware, programmedSectors), async () => {}),
-    /JIC programming target passed complete byte-for-byte verification, but restart failed/,
+    /complete 2 MB JIC image passed byte-for-byte verification, but restart failed/,
   );
   const expected = new Uint8Array(original);
-  for (const sector of programmedSectors) {
-    const start = sector * FLASH_SECTOR_SIZE;
-    expected.set(firmware.subarray(start, start + FLASH_SECTOR_SIZE), start);
-  }
+  expected.set(firmware, 0);
   assert.deepEqual(device.bytes, expected);
-  assert.equal(device.writes, 3, "a post-verification restart error must not rewrite the flash");
+  assert.equal(device.writes, 32, "a post-verification restart error must not rewrite the flash");
   assert.equal(device.restarts, 1);
 });
 

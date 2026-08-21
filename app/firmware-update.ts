@@ -68,41 +68,20 @@ async function readPhysicalFlash(device: FullFlashDevice, flashSize: number, onP
   return device.readFlash(0, flashSize, onProgress);
 }
 
-async function writeJicSectors(
-  device: FullFlashDevice,
-  image: FirmwareImage,
-  sectors: number[],
-  onProgress?: (fraction: number) => void,
-) {
-  requireFirmwareImage(image.bytes, "Firmware image");
-  for (let index = 0; index < sectors.length; index++) {
-    const sector = sectors[index];
-    const address = sector * FLASH_SECTOR_SIZE;
-    await device.writeFlashSector(
-      address,
-      image.bytes.subarray(address, address + FLASH_SECTOR_SIZE),
-      (fraction) => onProgress?.((index + fraction) / sectors.length),
-    );
-  }
-}
-
 export function createJicProgrammingTarget(image: FirmwareImage, backup: Uint8Array) {
   requireFirmwareImage(image.bytes, "Firmware image");
   requirePhysicalFlashBackup(backup, "Physical-flash backup");
-  if (image.format !== "JIC") throw new Error("Safe firmware update requires a validated JIC programming file.");
-  const unique = new Set(image.programmedSectors);
-  if (unique.size !== image.programmedSectors.length
-    || image.programmedSectors.some((sector) => !Number.isInteger(sector) || sector < 0 || sector >= FIRMWARE_SECTOR_COUNT)) {
-    throw new Error("Rejected: the JIC programming-sector map is invalid.");
-  }
+  if (image.format !== "JIC") throw new Error("Complete firmware installation requires a validated JIC programming file.");
   const target = new Uint8Array(backup);
   const changedSectors: number[] = [];
-  for (const sector of image.programmedSectors) {
+  for (let sector = 0; sector < FIRMWARE_SECTOR_COUNT; sector++) {
     const start = sector * FLASH_SECTOR_SIZE;
     const desired = image.bytes.subarray(start, start + FLASH_SECTOR_SIZE);
     if (!equalBytes(backup.subarray(start, start + FLASH_SECTOR_SIZE), desired)) changedSectors.push(sector);
-    target.set(desired, start);
   }
+  // The complete extracted 2 MB JIC image is the target. Blank/FF sectors are
+  // intentionally included; no sector is inferred to be "unassigned".
+  target.set(image.bytes, 0);
   return { target, changedSectors };
 }
 
@@ -179,11 +158,11 @@ export async function runSafeFirmwareUpdate(
   try {
     if (changed) {
       progress?.("update-write", 0);
-      await writeJicSectors(device, firmwareImage, changedSectors, (fraction) => progress?.("update-write", fraction));
+      await writeFirmwareRegion(device, firmwareImage.bytes, (fraction) => progress?.("update-write", fraction));
       progress?.("update-verify", 0);
       const readback = await readPhysicalFlash(device, backup.length, (fraction) => progress?.("update-verify", fraction));
       if (!equalBytes(readback, target)) {
-        throw new Error("Firmware verification failed: programmed JIC sectors or preserved backup sectors do not match.");
+        throw new Error("Firmware verification failed: the complete 2 MB JIC image or preserved flash beyond it does not match.");
       }
     }
   } catch (updateError) {
@@ -234,7 +213,7 @@ export async function runSafeFirmwareUpdate(
   } catch (restartError) {
     const restart = restartError instanceof Error ? restartError.message : "unknown restart error";
     throw new FirmwareUpdateError(
-      `The JIC programming target passed complete byte-for-byte verification, but restart failed: ${restart}. Keep the saved pre-test dump for manual recovery if the module does not boot.`,
+      `The complete 2 MB JIC image passed byte-for-byte verification, but restart failed: ${restart}. Keep the saved pre-test dump for manual recovery if the module does not boot.`,
       false,
       false,
     );
