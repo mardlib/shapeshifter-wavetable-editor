@@ -2,12 +2,13 @@
 
 [**Open the Shapeshifter Wavetable Bank Editor**](https://mardlib.github.io/shapeshifter-wavetable-editor/)
 
-**Current version: 0.2.2** · [Release notes](RELEASE_NOTES.md) · [All GitHub releases](https://github.com/mardlib/shapeshifter-wavetable-editor/releases)
+**Current version: 0.2.3** · [Release notes](RELEASE_NOTES.md) · [All GitHub releases](https://github.com/mardlib/shapeshifter-wavetable-editor/releases)
 
-### What changed in 0.2.2
+### What changed in 0.2.3
 
-- The firmware confirmation now clearly says `UPDATE FIRMWARE`.
-- The current version and release history are visible directly in this README.
+- Firmware installation is disabled while exact compatibility with the official
+  Quartus JIC programming process is being verified.
+- Complete read-only flash backups and exact full-flash recovery remain available.
 
 ![Shapeshifter Wavetable Bank Editor](docs/screenshot.jpg)
 
@@ -39,13 +40,8 @@ does not require a firmware image or a platform-specific application.
   other seven banks stored in the same flash sector.
 - Write and verify the selected bank, with automatic in-session rollback if a
   write check fails.
-- Run a guarded firmware update from a validated official Shapeshifter JIC:
-  detect the fitted 2 MB or 8 MB flash, read it twice, save the fresh complete dump,
-  write only populated sectors specified by the JIC, verify them, confirm all
-  omitted sectors still match the backup, and only then restart the FPGA.
-- Automatically restore and verify the original full-flash dump if the
-  firmware write or pre-boot verification fails, or load that dump later for
-  manual recovery after an unsuccessful hardware test.
+- Create a verified complete read-only flash backup.
+- Load a saved full-flash dump for exact byte-for-byte recovery.
 
 All audio conversion and bank processing happens locally in the browser.
 No files are uploaded by the application.
@@ -86,34 +82,18 @@ new bank has been tested. To restore it later, verify the Shapeshifter, choose
 confirmation phrase. The restore process copies only the bank and name recorded
 in the file, verifies both, and leaves neighboring banks unchanged.
 
-## Experimental firmware update and recovery
+## Full-flash backup and recovery
 
-Hardware testing showed that treating the sparse JIC payload as a complete
-image can prevent boot. The corrected sparse-sector flow was subsequently
-verified on hardware: it wrote only the six changed populated sectors from the
-official v2.04 JIC, passed the complete 8 MB readback, and booted normally.
-The feature remains experimental and always requires a fresh persistent backup.
+Firmware installation from JIC files is disabled. WavePort's earlier sparse-JIC
+method was hardware-tested on one module, but it has not been proven equivalent
+to the official Quartus programming process across firmware and hardware versions.
+Use the official Quartus Programmer for firmware updates.
 
-The collapsed firmware section is independent of the normal bank workflow. It
-accepts an official Shapeshifter `.jic` only after its Quartus, EP4CE22, EPCS16,
-payload-size, and payload-boundary fields have been validated. Immediately
-before every update, the app detects the fitted EPCS16 or EPCS64, reads the complete
-physical flash twice, and requires that matching dump to be saved outside browser memory
-before the first erase/write. The official image remains 2 MB. Fully blank JIC
-sectors are treated as unassigned and preserved from the backup; populated JIC
-sectors are the only update targets. The rest of the physical flash is preserved.
-
-Two intentionally separate comparisons are used:
-
-- after an update, populated JIC sectors must equal the corresponding official
-  bytes and every omitted sector must equal the pre-test backup before restart;
-- after automatic or manual recovery, the complete physical flash must equal the
-  original pre-test dump byte-for-byte.
-
-The original dump is never compared with the new firmware image. It preserves
-the exact pre-test state, including existing wavetables, presets, calibration,
-and every other byte in the fitted flash. Keep it until the module has booted and its
-hardware operation has been confirmed.
+The collapsed recovery section can still detect the fitted EPCS16 or EPCS64,
+read the complete physical flash twice, and save the matching dump without making
+changes. A selected full-flash backup can later be restored and verified against
+that same backup byte-for-byte. It preserves the exact recorded state, including
+wavetables, presets, calibration, firmware, and every other byte in the dump.
 
 ## Local development
 
