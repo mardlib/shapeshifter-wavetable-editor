@@ -30,8 +30,8 @@ import {
 } from "./firmware-update";
 import { UsbBlasterJtag, expectedShapeshifter, formatIdCode } from "./webusb-jtag";
 
-// Firmware installation is disabled until WavePort can reproduce and verify
-// the official Quartus JIC programming semantics. Full backup/recovery stays available.
+// Complete-image JIC installation passed the physical 2.01 -> 2.04 hardware test.
+// Keep this switch as an explicit emergency kill switch for public builds.
 const FIRMWARE_WRITES_ENABLED = true;
 
 type UsbSummary = {
@@ -1059,7 +1059,7 @@ export default function ShapeshifterStudio() {
           {jtagId && <details className="emergency-tools">
             <summary>Full-flash backup &amp; recovery</summary>
             <div className="emergency-body">
-              <p>Local hardware test: installation writes the complete 2 MB image extracted from the selected official JIC. Custom wavetables and other data in that region will be replaced.</p>
+              <p>Firmware installation writes the complete, unmodified 2 MB image extracted from the selected official JIC. Custom wavetables, presets, and other data in that region will be replaced.</p>
               <button className="wide read-only-backup-button" type="button" disabled={jtagBusy} onClick={() => void createReadOnlyFullFlashBackup()}>Create complete safety copy — no changes</button>
               {fullFlashBackupName && <div className="full-flash-file"><b>✓ Safety copy verified</b><small>{fullFlashBackupName} · two matching reads · nothing changed</small></div>}
               {!FIRMWARE_WRITES_ENABLED && <div className="full-flash-file"><b>Firmware installation unavailable</b><small>Use the official Quartus Programmer for firmware updates.</small></div>}
@@ -1101,7 +1101,7 @@ export default function ShapeshifterStudio() {
         </section>
       </section>
 
-      <footer><span>WAVEPORT / EXPERIMENTAL HARDWARE TOOL</span><span>No files are uploaded.</span></footer>
+      <footer><span>WAVEPORT 0.3.0 / EXPERIMENTAL HARDWARE TOOL</span><span>No files are uploaded.</span></footer>
     </main>
   );
 }

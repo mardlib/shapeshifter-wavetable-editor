@@ -2,13 +2,17 @@
 
 [**Open the Shapeshifter Wavetable Bank Editor**](https://mardlib.github.io/shapeshifter-wavetable-editor/)
 
-**Current version: 0.2.3** · [Release notes](RELEASE_NOTES.md) · [All GitHub releases](https://github.com/mardlib/shapeshifter-wavetable-editor/releases)
+**Current version: 0.3.0** · [Release notes](RELEASE_NOTES.md) · [All GitHub releases](https://github.com/mardlib/shapeshifter-wavetable-editor/releases)
 
-### What changed in 0.2.3
+### What changed in 0.3.0
 
-- Firmware installation is disabled while exact compatibility with the official
-  Quartus JIC programming process is being verified.
-- Complete read-only flash backups and exact full-flash recovery remain available.
+- Adds the hardware-tested complete-image firmware update flow for official
+  Shapeshifter JIC files.
+- Saves and verifies a complete 2 MB or 8 MB safety copy before any firmware write.
+- Replaces and verifies the entire 2 MB JIC image, including blank sectors, and
+  automatically restores the original state if writing or verification fails.
+- Recovers complete flash reads from occasional USB transfer errors without
+  accepting a shifted or incomplete data block.
 
 ![Shapeshifter Wavetable Bank Editor](docs/screenshot.jpg)
 
@@ -41,6 +45,7 @@ does not require a firmware image or a platform-specific application.
 - Write and verify the selected bank, with automatic in-session rollback if a
   write check fails.
 - Create a verified complete read-only flash backup.
+- Install an official Shapeshifter JIC as a complete, unmodified 2 MB image.
 - Load a saved full-flash dump for exact byte-for-byte recovery.
 
 All audio conversion and bank processing happens locally in the browser.
@@ -65,7 +70,7 @@ and keeps the complete interface and Shapeshifter USB bridge available offline.
 An internet connection is only needed for the initial installation and to
 receive future updates. USB access and all audio processing remain local.
 
-## Normal workflow
+## Write a wavetable bank
 
 1. Import or generate a bank.
 2. Select the destination bank and display name.
@@ -82,18 +87,113 @@ new bank has been tested. To restore it later, verify the Shapeshifter, choose
 confirmation phrase. The restore process copies only the bank and name recorded
 in the file, verifies both, and leaves neighboring banks unchanged.
 
-## Full-flash backup and recovery
+Writing one wavetable bank does not require a JIC firmware file and does not
+replace the whole firmware area. A WavePort `.backup` is a bank-level backup;
+it is different from the complete `.bin` safety copy used for firmware recovery.
 
-Firmware installation from JIC files is disabled. WavePort's earlier sparse-JIC
-method was hardware-tested on one module, but it has not been proven equivalent
-to the official Quartus programming process across firmware and hardware versions.
-Use the official Quartus Programmer for firmware updates.
+## Update or downgrade the firmware
 
-The collapsed recovery section can still detect the fitted EPCS16 or EPCS64,
-read the complete physical flash twice, and save the matching dump without making
-changes. A selected full-flash backup can later be restored and verified against
-that same backup byte-for-byte. It preserves the exact recorded state, including
-wavetables, presets, calibration, firmware, and every other byte in the dump.
+WavePort accepts only a validated Shapeshifter `.jic` file. Download the desired
+official firmware from Intellijel; do not rename a raw binary to `.jic`. WavePort
+extracts the JIC's 2 MB image without modifying or patching it. WavePort itself is
+a custom, unofficial programmer and does not claim to reproduce Quartus's exact
+USB/JTAG command sequence.
+
+> [!IMPORTANT]
+> A complete firmware installation replaces all 32 sectors in the first 2 MB,
+> including sectors filled with `FF`. Existing custom wavetables, presets, and
+> any other data stored there will be replaced. Flash beyond the official 2 MB
+> JIC area is preserved. Keep the automatically created complete safety copy.
+
+1. Download the official Shapeshifter JIC you want to install.
+2. Open WavePort in desktop Chrome or Edge and connect the USB service cable.
+3. Select **Check Shapeshifter**.
+4. Open **Full-flash backup & recovery**.
+5. Select **Choose official Shapeshifter firmware** and choose the `.jic` file.
+6. Optionally run **Check what the update would change — read only**.
+7. Enter `UPDATE FIRMWARE` and select **Update firmware safely**.
+8. Choose a permanent location for the automatically created complete `.bin`
+   safety copy. The firmware write will not start unless that file is saved.
+9. Leave USB and Eurorack power connected until WavePort reports that verification
+   and restart are complete. The module may be silent with its LEDs lit while the
+   temporary programming bridge is active; this is expected.
+10. Test controls and audio. To display the installed version, enter PRESET MODE,
+    hold **DETUNE**, and press **LOAD**.
+
+The safety copy is read twice and both reads must match. After writing, WavePort
+reads the complete fitted flash and requires this separate comparison:
+
+```text
+first 2 MB after update == unmodified image extracted from the selected JIC
+flash beyond 2 MB       == same bytes from the pre-update safety copy
+```
+
+The FPGA restarts only after the comparison passes. If writing or verification
+fails before restart, WavePort automatically restores the original firmware area
+and verifies the complete flash against the pre-update safety copy.
+
+### Restore factory presets after a complete update
+
+If the preset list is empty after installing firmware 2.01 or newer:
+
+1. Power the Shapeshifter off.
+2. Set the left-most tiny DIP switch on the lower-left of the rear circuit board
+   to **UP**.
+3. Power on; enter PRESET MODE; press **SAVE**; turn the encoder to `Y?`; press
+   **SAVE** again.
+4. Power off, return that DIP switch to **DOWN**, and power on again.
+
+This initializes the firmware's factory presets. It does not recover personal
+presets or custom wavetables; use the pre-update full-flash safety copy for that.
+
+## Complete backup and recovery
+
+**Create complete safety copy — no changes** detects an EPCS16 (2 MB) or EPCS64
+(8 MB), reads the whole fitted flash twice, requires identical reads, and downloads
+the matching `.bin`. Nothing is written during this operation.
+
+If a newly installed image passed verification but the module does not boot, the
+saved pre-update dump remains usable because JTAG recovery does not depend on that
+image booting:
+
+1. Reconnect and select **Check Shapeshifter**.
+2. Open **Full-flash backup & recovery**.
+3. Select **Restore a complete safety copy** and load the exact pre-update `.bin`.
+4. Enter `RECOVER ORIGINAL FLASH` and select **Recover & verify**.
+5. Keep USB and power connected until verification and restart finish.
+
+Recovery uses a different comparison from firmware installation:
+
+```text
+complete flash after recovery == original pre-update full-flash dump
+```
+
+The old dump is never compared with the new official image. It is a byte-for-byte
+snapshot of the original state, including personal wavetables, presets, calibration,
+firmware, and every other recorded byte.
+
+## Hardware validation
+
+The 0.3.0 flow was tested on a physical Shapeshifter with an 8 MB EPCS64:
+
+- complete flash backup using two identical 8 MB reads;
+- complete downgrade using the official, unmodified 2.01.1 JIC image;
+- full-flash readback verification and successful restart as firmware 2.01;
+- normal WavePort wavetable-bank write on 2.01;
+- complete installation of the official, unmodified 2.04 JIC image;
+- full verification, successful restart, controls, display, and audio.
+
+The test confirms the resulting logical flash image, not equivalence with every
+internal command used by Intel Quartus or compatibility with every hardware revision.
+WavePort remains unofficial experimental software.
+
+## Versioning
+
+WavePort follows semantic versioning: major versions may introduce incompatible
+workflows or file formats, minor versions add functionality, and patch versions
+contain compatible fixes. The version in this README, `package.json`, GitHub tag,
+and GitHub release should match. Detailed history is kept in
+[RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 ## Local development
 

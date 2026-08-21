@@ -1,3 +1,37 @@
+# WavePort 0.3.0
+
+## Complete-image firmware installation
+
+- Re-enables firmware installation after physical downgrade, wavetable-write,
+  upgrade, restart, display, control, and audio testing.
+- Accepts only a validated Shapeshifter JIC and writes its extracted, unmodified
+  2 MB image in full, including blank/`FF` sectors.
+- Removes the earlier sparse-JIC behavior; firmware installation now replaces all
+  32 sectors in the official 2 MB region while preserving fitted flash beyond it.
+- Reads the complete EPCS16 or EPCS64 twice and permanently saves the matching
+  pre-update dump before any firmware write.
+- Reads the complete fitted flash after installation and verifies the new 2 MB
+  image plus every preserved byte before restarting the FPGA.
+- Automatically restores the original 2 MB region and verifies the complete flash
+  against the pre-update dump after a write or pre-restart verification failure.
+- Keeps manual recovery from that same complete dump available if a verified image
+  does not boot after restart.
+- Retries complete 1 KB read blocks after recoverable WebUSB transfer errors so a
+  partial or shifted USB response can never be accepted as flash data.
+- Documents firmware updates, factory-preset initialization, wavetable writes,
+  backup/recovery, hardware validation, and versioning in the README.
+
+### Hardware validation
+
+Tested on one physical EPCS64 Shapeshifter with official, unmodified Intellijel
+JIC files: complete downgrade to 2.01.1, version confirmation, normal wavetable
+write, and complete return to 2.04. Both firmware installations passed full-flash
+byte-for-byte verification before restart; display, controls, and audio worked.
+
+WavePort uses a custom USB/JTAG programmer. This test verifies the resulting flash
+contents and module operation; it does not claim identical internal commands to
+Intel Quartus or validation across every hardware revision.
+
 # WavePort 0.2.3
 
 ## Firmware installation disabled

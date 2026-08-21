@@ -7,7 +7,7 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 
 export const metadata: Metadata = {
   title: "WavePort — Shapeshifter Wavetable Studio",
-  description: "Local-first wavetable and firmware workspace for the Intellijel Shapeshifter.",
+  description: "Local-first wavetable, backup, recovery, and official JIC firmware workspace for the Intellijel Shapeshifter.",
   manifest: "/manifest.webmanifest",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
 };

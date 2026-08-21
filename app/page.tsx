@@ -4,7 +4,7 @@ import ShapeshifterStudio from "./ShapeshifterStudio";
 export const metadata: Metadata = {
   title: "WavePort — Shapeshifter Wavetable Studio",
   description:
-    "Create, patch, back up and diagnose Intellijel Shapeshifter wavetable firmware locally in your browser.",
+    "Create and write Shapeshifter wavetable banks, make complete backups, and safely install official JIC firmware locally in your browser.",
 };
 
 export default function Home() {

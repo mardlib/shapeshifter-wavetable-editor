@@ -27,7 +27,7 @@ test("server-renders WavePort without the disposable starter preview", async () 
   assert.doesNotMatch(html, /react-loading-skeleton|Your site is taking shape/);
 });
 
-test("local hardware test uses the explicit complete-image firmware path", async () => {
+test("public firmware updater uses the hardware-tested complete-image path", async () => {
   const source = await readFile(new URL("../app/ShapeshifterStudio.tsx", import.meta.url), "utf8");
   assert.match(source, /const FIRMWARE_WRITES_ENABLED = true;/);
   assert.match(source, /if \(!FIRMWARE_WRITES_ENABLED\)/);
