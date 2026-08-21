@@ -120,6 +120,22 @@ export class UsbBlasterJtag {
     return new Uint8Array(payload.slice(0, length));
   }
 
+  private isRecoverableTransferInError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return /transferIn.*transfer error|transfer error.*transferIn/i.test(message);
+  }
+
+  private async recoverTransferIn() {
+    // Discard any incomplete FTDI packet before repeating the complete flash
+    // read command. Continuing inside a failed packet could shift every byte.
+    const purge = await this.device.controlTransferOut({
+      requestType: "vendor", recipient: "device", request: 0, value: 1, index: 1,
+    });
+    if (purge.status !== "ok") throw new Error(`FTDI receive-buffer recovery: ${purge.status}`);
+    this.state = "reset";
+    await this.resetTap();
+  }
+
   private async clockTms(bits: number[]) {
     if (!bits.length) return;
     const commands: number[] = [];
@@ -299,10 +315,20 @@ export class UsbBlasterJtag {
       commandData[0] = reverseByte((currentAddress >>> 16) & 0xff);
       commandData[1] = reverseByte((currentAddress >>> 8) & 0xff);
       commandData[2] = reverseByte(currentAddress & 0xff);
-      await this.shiftVir(reverseByte(0x03));
-      const raw = await this.shiftVdr(commandData, commandData.length * 8, true);
+      let raw: Uint8Array | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await this.shiftVir(reverseByte(0x03));
+          raw = await this.shiftVdr(commandData, commandData.length * 8, true);
+          break;
+        } catch (error) {
+          if (attempt === 2 || !this.isRecoverableTransferInError(error)) throw error;
+          await this.recoverTransferIn();
+        }
+      }
+      if (!raw) throw new Error(`Flash read failed at address 0x${currentAddress.toString(16)}.`);
       for (let i = 0; i < count; i++) {
-        output[offset + i] = reverseByte(raw![i + 4] >>> 1) | (raw![i + 5] & 1);
+        output[offset + i] = reverseByte(raw[i + 4] >>> 1) | (raw[i + 5] & 1);
       }
       onProgress?.((offset + count) / length);
     }
