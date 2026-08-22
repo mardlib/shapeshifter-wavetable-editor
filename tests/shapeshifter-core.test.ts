@@ -15,7 +15,7 @@ import {
   restoreFullFlashBackup,
   runSafeFirmwareUpdate,
 } from "../app/firmware-update.ts";
-import { usbBlasterReadRequestLength } from "../app/usb-blaster-core.ts";
+import { isRecoverableUsbReadError, usbBlasterReadRequestLength } from "../app/usb-blaster-core.ts";
 
 function makeJic() {
   const headerSize = 0x9b;
@@ -41,6 +41,14 @@ test("USB-Blaster reads always reserve complete 64-byte FTDI packets", () => {
   assert.equal(usbBlasterReadRequestLength(4), 64);
   assert.equal(usbBlasterReadRequestLength(62), 64);
   assert.equal(usbBlasterReadRequestLength(63), 128);
+});
+
+test("flash reads retry recoverable WebUSB errors in either direction", () => {
+  assert.equal(isRecoverableUsbReadError(new Error("Failed to execute 'transferIn' on 'USBDevice': A transfer error has occurred.")), true);
+  assert.equal(isRecoverableUsbReadError(new Error("Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.")), true);
+  assert.equal(isRecoverableUsbReadError(new Error("USB-Blaster output: stall")), true);
+  assert.equal(isRecoverableUsbReadError(new Error("Incomplete JTAG readback (100/1024).")), true);
+  assert.equal(isRecoverableUsbReadError(new Error("Connection permission is missing.")), false);
 });
 
 test("detects older 2 MB and newer 8 MB DE0-Nano flash chips", () => {

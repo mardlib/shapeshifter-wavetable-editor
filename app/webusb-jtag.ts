@@ -4,7 +4,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- WebUSB is not part of the standard TypeScript DOM declarations. */
 
-import { usbBlasterReadRequestLength } from "./usb-blaster-core";
+import { isRecoverableUsbReadError, usbBlasterReadRequestLength } from "./usb-blaster-core";
 
 export const SHAPESHIFTER_IDCODE = 0x020f30dd;
 
@@ -121,18 +121,22 @@ export class UsbBlasterJtag {
     return new Uint8Array(payload.slice(0, length));
   }
 
-  private isRecoverableTransferInError(error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    return /transferIn.*transfer error|transfer error.*transferIn/i.test(message);
-  }
-
-  private async recoverTransferIn() {
-    // Discard any incomplete FTDI packet before repeating the complete flash
-    // read command. Continuing inside a failed packet could shift every byte.
-    const purge = await this.device.controlTransferOut({
-      requestType: "vendor", recipient: "device", request: 0, value: 1, index: 1,
-    });
-    if (purge.status !== "ok") throw new Error(`FTDI receive-buffer recovery: ${purge.status}`);
+  private async recoverReadTransfer() {
+    // A failed OUT may have delivered only part of a JTAG command, while a
+    // failed IN may leave an incomplete reply queued. Clear both endpoint
+    // halts and both FTDI buffers before repeating the complete read block.
+    for (const [direction, endpoint] of [["in", this.inEndpoint], ["out", this.outEndpoint]] as const) {
+      try { await this.device.clearHalt(direction, endpoint); } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.diagnostic?.("usb.read.clear-halt.warning", `direction=${direction} endpoint=${endpoint} error=${message}`);
+      }
+    }
+    for (const [value, label] of [[1, "receive"], [2, "transmit"]] as const) {
+      const purge = await this.device.controlTransferOut({
+        requestType: "vendor", recipient: "device", request: 0, value, index: 1,
+      });
+      if (purge.status !== "ok") throw new Error(`FTDI ${label}-buffer recovery: ${purge.status}`);
+    }
     this.state = "reset";
     await this.resetTap();
   }
@@ -323,10 +327,10 @@ export class UsbBlasterJtag {
           raw = await this.shiftVdr(commandData, commandData.length * 8, true);
           break;
         } catch (error) {
-          if (attempt === 2 || !this.isRecoverableTransferInError(error)) throw error;
+          if (attempt === 2 || !isRecoverableUsbReadError(error)) throw error;
           const message = error instanceof Error ? error.message : String(error);
-          this.diagnostic?.("usb.read.retry", `address=0x${currentAddress.toString(16)} attempt=${attempt + 1}/3 error=${message}`);
-          await this.recoverTransferIn();
+          this.diagnostic?.("usb.read.retry", `address=0x${currentAddress.toString(16)} retry=${attempt + 1}/2 error=${message}`);
+          await this.recoverReadTransfer();
         }
       }
       if (!raw) throw new Error(`Flash read failed at address 0x${currentAddress.toString(16)}.`);

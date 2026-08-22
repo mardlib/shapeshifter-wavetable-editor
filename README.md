@@ -2,15 +2,15 @@
 
 [**Open the Shapeshifter Wavetable Bank Editor**](https://mardlib.github.io/shapeshifter-wavetable-editor/)
 
-**Current version: 0.3.1** · [Release notes](RELEASE_NOTES.md) · [All GitHub releases](https://github.com/mardlib/shapeshifter-wavetable-editor/releases)
+**Current version: 0.3.2** · [Release notes](RELEASE_NOTES.md) · [All GitHub releases](https://github.com/mardlib/shapeshifter-wavetable-editor/releases)
 
-### What changed in 0.3.1
+### What changed in 0.3.2
 
-- Adds a persistent local diagnostic log for firmware operations.
-- Records the detected FPGA and EPCS type, operation stages, USB read retries,
-  verification, restart, errors, and automatic recovery outcome.
-- Downloads the log as a shareable text file without including flash contents,
-  audio, selected files, or the USB serial number.
+- Retries complete flash-read blocks after recoverable WebUSB errors in either
+  direction, including the macOS `transferOut` failure seen during backup verification.
+- Clears both USB endpoint halts and both FTDI buffers before resetting JTAG and
+  repeating the block, preventing partial commands or replies from being reused.
+- Records every retry, flash address, and recovery warning in the diagnostic log.
 
 ![Shapeshifter Wavetable Bank Editor](docs/screenshot.jpg)
 

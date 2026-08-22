@@ -1,3 +1,15 @@
+# WavePort 0.3.2
+
+## Bidirectional WebUSB read recovery
+
+- Retries a complete 1 KB flash-read block after recoverable `transferOut` as
+  well as `transferIn` failures.
+- Clears both USB endpoint halts and purges both FTDI buffers before resetting
+  the JTAG state, so partial commands and replies are never continued.
+- Covers the repeated macOS failure reported during the second safety-backup read,
+  before any firmware write had begun.
+- Logs the retry address, attempt, original USB error, and recovery warnings.
+
 # WavePort 0.3.1
 
 ## Downloadable local diagnostics

@@ -33,7 +33,7 @@ import { UsbBlasterJtag, expectedShapeshifter, formatIdCode } from "./webusb-jta
 // Complete-image JIC installation passed the physical 2.01 -> 2.04 hardware test.
 // Keep this switch as an explicit emergency kill switch for public builds.
 const FIRMWARE_WRITES_ENABLED = true;
-const APP_VERSION = "0.3.1";
+const APP_VERSION = "0.3.2";
 const DIAGNOSTIC_STORAGE_KEY = "waveport-diagnostic-log-v1";
 const MAX_DIAGNOSTIC_ENTRIES = 500;
 
