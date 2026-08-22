@@ -1,3 +1,15 @@
+# WavePort 0.3.1
+
+## Downloadable local diagnostics
+
+- Keeps a timestamped firmware-operation log in browser storage across reloads.
+- Records application/browser versions, FPGA and EPCS detection, stage changes,
+  recoverable USB read retries, verification, restart, errors, and rollback state.
+- Adds a visible diagnostic panel that downloads the history as a shareable text
+  file or clears it locally.
+- Excludes flash contents, audio, firmware and backup contents, and USB serial
+  numbers; nothing is uploaded.
+
 # WavePort 0.3.0
 
 ## Complete-image firmware installation

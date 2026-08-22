@@ -122,6 +122,9 @@ select:focus,input:focus { border-color:var(--yellow); }
 .firmware-review.recovery .confirm-recovery { color:#0d1720; background:#8dbdff; border-color:#8dbdff; }
 .full-recovery-button { color:#9fc3ef; background:#121b24; border:1px solid #30465c; }
 .read-only-backup-button { color:#8dddb7; background:#101a17; border:1px solid #305743; }
+.diagnostic-tools { border-top-color:#354252; }
+.diagnostic-tools summary { color:#91a2b5; }
+.diagnostic-download-button { color:#9fc3ef; background:#101820; border:1px solid #3d5873; }
 .firmware-progress { height:4px; margin-top:8px; background:#0c0f12; overflow:hidden; }
 .firmware-progress i { display:block; height:100%; background:#ff9e66; transition:width .18s ease; }
 .flash-lock { margin-top:14px; display:flex; gap:10px; color:#818a95; background:#101318; border:1px solid #282e36; padding:12px; }

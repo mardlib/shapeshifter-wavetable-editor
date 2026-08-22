@@ -66,6 +66,7 @@ export class UsbBlasterJtag {
     private device: any,
     private inEndpoint: number,
     private outEndpoint: number,
+    private diagnostic?: (event: string, details?: string) => void,
   ) {}
 
   async initialize() {
@@ -323,6 +324,8 @@ export class UsbBlasterJtag {
           break;
         } catch (error) {
           if (attempt === 2 || !this.isRecoverableTransferInError(error)) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          this.diagnostic?.("usb.read.retry", `address=0x${currentAddress.toString(16)} attempt=${attempt + 1}/3 error=${message}`);
           await this.recoverTransferIn();
         }
       }

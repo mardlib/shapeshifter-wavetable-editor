@@ -34,4 +34,8 @@ test("public firmware updater uses the hardware-tested complete-image path", asy
   assert.match(source, /entire extracted 2 MB image is then written, including blank sectors/);
   assert.match(source, /Create complete safety copy — no changes/);
   assert.match(source, /Restore a complete safety copy/);
+  assert.match(source, /Download diagnostic log/);
+  assert.match(source, /waveport-diagnostic-log-v1/);
+  assert.match(source, /firmware\.update\.error/);
+  assert.match(source, /flash\.detected/);
 });

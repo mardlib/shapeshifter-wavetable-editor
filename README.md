@@ -2,17 +2,15 @@
 
 [**Open the Shapeshifter Wavetable Bank Editor**](https://mardlib.github.io/shapeshifter-wavetable-editor/)
 
-**Current version: 0.3.0** · [Release notes](RELEASE_NOTES.md) · [All GitHub releases](https://github.com/mardlib/shapeshifter-wavetable-editor/releases)
+**Current version: 0.3.1** · [Release notes](RELEASE_NOTES.md) · [All GitHub releases](https://github.com/mardlib/shapeshifter-wavetable-editor/releases)
 
-### What changed in 0.3.0
+### What changed in 0.3.1
 
-- Adds the hardware-tested complete-image firmware update flow for official
-  Shapeshifter JIC files.
-- Saves and verifies a complete 2 MB or 8 MB safety copy before any firmware write.
-- Replaces and verifies the entire 2 MB JIC image, including blank sectors, and
-  automatically restores the original state if writing or verification fails.
-- Recovers complete flash reads from occasional USB transfer errors without
-  accepting a shifted or incomplete data block.
+- Adds a persistent local diagnostic log for firmware operations.
+- Records the detected FPGA and EPCS type, operation stages, USB read retries,
+  verification, restart, errors, and automatic recovery outcome.
+- Downloads the log as a shareable text file without including flash contents,
+  audio, selected files, or the USB serial number.
 
 ![Shapeshifter Wavetable Bank Editor](docs/screenshot.jpg)
 
@@ -50,6 +48,19 @@ does not require a firmware image or a platform-specific application.
 
 All audio conversion and bank processing happens locally in the browser.
 No files are uploaded by the application.
+
+## Diagnostic log
+
+Open **Diagnostic log** in the connection panel and select **Download diagnostic
+log** to save a shareable `.txt` file. The log is retained in that browser across
+page reloads, so it remains available after an update error. It contains timestamps,
+the WavePort and browser versions, detected FPGA/EPCS information, firmware-operation
+stages, USB read retries, verification results, restart attempts, and automatic
+recovery results.
+
+The diagnostic log is never uploaded. It does not contain flash contents, imported
+audio, firmware or backup file contents, or the USB device serial number. **Clear
+diagnostic log** removes the locally stored history.
 
 ## Requirements
 

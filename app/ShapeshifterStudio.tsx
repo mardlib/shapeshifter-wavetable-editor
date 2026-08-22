@@ -33,6 +33,15 @@ import { UsbBlasterJtag, expectedShapeshifter, formatIdCode } from "./webusb-jta
 // Complete-image JIC installation passed the physical 2.01 -> 2.04 hardware test.
 // Keep this switch as an explicit emergency kill switch for public builds.
 const FIRMWARE_WRITES_ENABLED = true;
+const APP_VERSION = "0.3.1";
+const DIAGNOSTIC_STORAGE_KEY = "waveport-diagnostic-log-v1";
+const MAX_DIAGNOSTIC_ENTRIES = 500;
+
+type DiagnosticEntry = {
+  at: string;
+  event: string;
+  details?: string;
+};
 
 type UsbSummary = {
   product: string;
@@ -76,6 +85,15 @@ function download(bytes: Uint8Array, filename: string, type = "application/octet
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+async function sha256(bytes: Uint8Array) {
+  const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function packBackup(backup: FlashBackup, bankSlot: number) {
@@ -192,10 +210,69 @@ export default function ShapeshifterStudio() {
   const [fullFlashBackupName, setFullFlashBackupName] = useState("");
   const [firmwareDryRunResult, setFirmwareDryRunResult] = useState("");
   const [webUsbAvailable, setWebUsbAvailable] = useState(false);
+  const [diagnosticEntries, setDiagnosticEntries] = useState<DiagnosticEntry[]>([]);
   const audioInput = useRef<HTMLInputElement>(null);
   const restoreInput = useRef<HTMLInputElement>(null);
   const officialFirmwareInput = useRef<HTMLInputElement>(null);
   const fullRecoveryInput = useRef<HTMLInputElement>(null);
+  const lastFirmwareStage = useRef<FirmwareStage | null>(null);
+  const firmwareProgressValue = useRef(0);
+
+  function storeDiagnosticEntries(entries: DiagnosticEntry[]) {
+    try { window.localStorage.setItem(DIAGNOSTIC_STORAGE_KEY, JSON.stringify(entries)); } catch {}
+  }
+
+  function appendDiagnostic(event: string, details?: string) {
+    const entry: DiagnosticEntry = { at: new Date().toISOString(), event, ...(details ? { details } : {}) };
+    setDiagnosticEntries((current) => {
+      const next = [...current, entry].slice(-MAX_DIAGNOSTIC_ENTRIES);
+      storeDiagnosticEntries(next);
+      return next;
+    });
+  }
+
+  function updateFirmwareProgress(value: number) {
+    firmwareProgressValue.current = value;
+    setFirmwareProgress(value);
+  }
+
+  function downloadDiagnosticLog() {
+    const lines = [
+      "WavePort diagnostic log",
+      `Generated: ${new Date().toISOString()}`,
+      `Application: WavePort ${APP_VERSION}`,
+      "Privacy: stored locally; no flash contents, audio, USB serial number, or file contents are included.",
+      "",
+      ...diagnosticEntries.map((entry) => `${entry.at}  ${entry.event}${entry.details ? `  ${entry.details}` : ""}`),
+      "",
+    ];
+    const created = new Date().toISOString().replace(/[:.]/g, "-");
+    download(new TextEncoder().encode(lines.join("\n")), `waveport-diagnostic-${created}.txt`, "text/plain");
+  }
+
+  function clearDiagnosticLog() {
+    setDiagnosticEntries([]);
+    try { window.localStorage.removeItem(DIAGNOSTIC_STORAGE_KEY); } catch {}
+  }
+
+  useEffect(() => {
+    let previous: DiagnosticEntry[] = [];
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(DIAGNOSTIC_STORAGE_KEY) ?? "[]");
+      if (Array.isArray(parsed)) {
+        previous = parsed.filter((entry): entry is DiagnosticEntry =>
+          Boolean(entry && typeof entry.at === "string" && typeof entry.event === "string"));
+      }
+    } catch {}
+    const started: DiagnosticEntry = {
+      at: new Date().toISOString(),
+      event: "session.start",
+      details: `WavePort ${APP_VERSION}; ${navigator.userAgent}`,
+    };
+    const next = [...previous, started].slice(-MAX_DIAGNOSTIC_ENTRIES);
+    void Promise.resolve().then(() => setDiagnosticEntries(next));
+    storeDiagnosticEntries(next);
+  }, []);
 
   useEffect(() => {
     const available = "usb" in navigator;
@@ -369,8 +446,9 @@ export default function ShapeshifterStudio() {
     const inEndpoint = endpoints.find((endpoint: any) => endpoint.direction === "in")?.endpointNumber;
     const outEndpoint = endpoints.find((endpoint: any) => endpoint.direction === "out")?.endpointNumber;
     if (inEndpoint == null || outEndpoint == null) throw new Error("The Shapeshifter connection could not be opened.");
-    const jtag = new UsbBlasterJtag(device, inEndpoint, outEndpoint);
+    const jtag = new UsbBlasterJtag(device, inEndpoint, outEndpoint, appendDiagnostic);
     await jtag.initialize();
+    appendDiagnostic("usb.session.open", `interface=${interfaceNumber} inEndpoint=${inEndpoint} outEndpoint=${outEndpoint}`);
     return { device, interfaceNumber, jtag };
   }
 
@@ -390,8 +468,11 @@ export default function ShapeshifterStudio() {
       }
       setJtagId(formatted);
       setStatus("Shapeshifter verified. Nothing was changed.");
+      appendDiagnostic("jtag.fpga.verified", `id=${formatted}`);
     } catch (error) {
-      setUsbError(error instanceof Error ? error.message : "The Shapeshifter connection could not be verified.");
+      const message = errorMessage(error, "The Shapeshifter connection could not be verified.");
+      appendDiagnostic("jtag.fpga.error", message);
+      setUsbError(message);
     } finally {
       try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
       try { if (device?.opened) await device.close(); } catch {}
@@ -683,12 +764,19 @@ export default function ShapeshifterStudio() {
       }
       setOfficialFirmware({ ...parsed, filename: file.name });
       setFirmwareConfirmation("");
-      setFirmwareProgress(0);
+      updateFirmwareProgress(0);
       setStatus(`Official Shapeshifter firmware verified: ${file.name}.`);
+      const digest = await sha256(parsed.bytes);
+      appendDiagnostic(
+        "firmware.jic.validated",
+        `file=${file.name} fileBytes=${file.size} imageBytes=${parsed.bytes.length} imageSha256=${digest}`,
+      );
     } catch (error) {
       setOfficialFirmware(null);
       setFirmwareConfirmation("");
-      setUsbError(error instanceof Error ? error.message : "The firmware file could not be validated.");
+      const message = errorMessage(error, "The firmware file could not be validated.");
+      appendDiagnostic("firmware.jic.rejected", `file=${file.name} fileBytes=${file.size} error=${message}`);
+      setUsbError(message);
     }
   }
 
@@ -701,12 +789,15 @@ export default function ShapeshifterStudio() {
       }
       setFullRecoveryBackup({ bytes, filename: file.name });
       setFullRecoveryConfirmation("");
-      setFirmwareProgress(0);
+      updateFirmwareProgress(0);
       setStatus(`Safety copy loaded: ${file.name}. Recovery will be checked only against this same file.`);
+      appendDiagnostic("recovery.file.loaded", `file=${file.name} bytes=${bytes.length}`);
     } catch (error) {
       setFullRecoveryBackup(null);
       setFullRecoveryConfirmation("");
-      setUsbError(error instanceof Error ? error.message : "The full-flash backup could not be loaded.");
+      const message = errorMessage(error, "The full-flash backup could not be loaded.");
+      appendDiagnostic("recovery.file.rejected", `file=${file.name} fileBytes=${file.size} error=${message}`);
+      setUsbError(message);
     }
   }
 
@@ -716,11 +807,20 @@ export default function ShapeshifterStudio() {
     if (!expectedShapeshifter(id)) throw new Error(`Canceled: wrong FPGA ${formatIdCode(id)}.`);
     const response = await fetch(new URL("bridges/spiOverJtag_ep4ce2217.rbf", document.baseURI));
     if (!response.ok) throw new Error("The full-flash service could not be prepared.");
-    await jtag.loadSpiBridge(new Uint8Array(await response.arrayBuffer()), progress);
+    const bridge = new Uint8Array(await response.arrayBuffer());
+    appendDiagnostic("bridge.load.start", `fpgaId=${formatIdCode(id)} bytes=${bridge.length}`);
+    await jtag.loadSpiBridge(bridge, progress);
+    appendDiagnostic("bridge.load.complete", `fpgaId=${formatIdCode(id)}`);
     const siliconId = await jtag.readEpcsSiliconId();
     try {
-      return flashSizeForEpcsSiliconId(siliconId);
+      const flashSize = flashSizeForEpcsSiliconId(siliconId);
+      appendDiagnostic(
+        "flash.detected",
+        `siliconId=0x${siliconId.toString(16).padStart(2, "0")} bytes=${flashSize} type=${flashSize === EPCS16_FLASH_SIZE ? "EPCS16" : "EPCS64"}`,
+      );
+      return flashSize;
     } catch (error) {
+      appendDiagnostic("flash.unsupported", `siliconId=0x${siliconId.toString(16).padStart(2, "0")}`);
       throw new Error(`Canceled: ${error instanceof Error ? error.message : "unsupported flash chip"}`);
     }
   }
@@ -739,7 +839,11 @@ export default function ShapeshifterStudio() {
       restart: [98, 100, "Verified byte-for-byte. Restarting the Shapeshifter from flash …"],
     };
     const [start, end, message] = ranges[stage];
-    setFirmwareProgress(start + (end - start) * fraction);
+    if (lastFirmwareStage.current !== stage) {
+      lastFirmwareStage.current = stage;
+      appendDiagnostic("firmware.stage", `${stage} overallRange=${start}-${end}%`);
+    }
+    updateFirmwareProgress(start + (end - start) * fraction);
     setStatus(message);
   }
 
@@ -777,22 +881,27 @@ export default function ShapeshifterStudio() {
       return;
     }
     if (!officialFirmware) return;
+    appendDiagnostic("firmware.update.requested", `file=${officialFirmware.filename}`);
     let persistBackup: ((bytes: Uint8Array) => Promise<void>) | null;
     try {
       persistBackup = await chooseFullBackupDestination();
     } catch (error) {
-      setUsbError(error instanceof Error ? error.message : "The permanent backup destination could not be opened.");
+      const message = errorMessage(error, "The permanent backup destination could not be opened.");
+      appendDiagnostic("firmware.backup.destination.error", message);
+      setUsbError(message);
       return;
     }
     if (!persistBackup) {
       setStatus("Firmware update canceled before accessing the Shapeshifter. Nothing was changed.");
+      appendDiagnostic("firmware.update.canceled", "backup destination was canceled; flash untouched");
       return;
     }
 
     setUsbError("");
     setJtagBusy(true);
     setFirmwareConfirmation("");
-    setFirmwareProgress(0);
+    updateFirmwareProgress(0);
+    lastFirmwareStage.current = null;
     let device: any = null;
     let interfaceNumber = 0;
     let jtag: UsbBlasterJtag | null = null;
@@ -802,25 +911,44 @@ export default function ShapeshifterStudio() {
       const session = await openJtagSession();
       ({ device, interfaceNumber, jtag } = session);
       setStatus("Preparing the Shapeshifter for the safe firmware update …");
-      const flashSize = await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      const flashSize = await loadFullFlashBridge(jtag, (fraction) => updateFirmwareProgress(fraction * 10));
       bridgeLoaded = true;
       const progress = (stage: FirmwareStage, fraction: number) => {
         if (stage === "update-write") flashWriteAttempted = true;
         reportFirmwareProgress(stage, fraction);
       };
-      const result = await runSafeFirmwareUpdate(jtag, officialFirmware, persistBackup, progress, flashSize);
+      const saveBackup = async (bytes: Uint8Array) => {
+        await persistBackup(bytes);
+        appendDiagnostic("firmware.backup.saved", `bytes=${bytes.length}`);
+      };
+      const result = await runSafeFirmwareUpdate(jtag, officialFirmware, saveBackup, progress, flashSize);
       bridgeLoaded = false;
-      setFirmwareProgress(100);
+      updateFirmwareProgress(100);
       setJtagId("");
       setStatus(result.changed
         ? "Complete 2 MB firmware image verified byte-for-byte. The Shapeshifter restarted."
         : "The selected firmware was already installed. Nothing was written; the Shapeshifter restarted.");
+      appendDiagnostic(
+        "firmware.update.success",
+        result.changed ? "complete image verified; restart complete" : "image already installed; restart complete",
+      );
     } catch (error) {
       if (error instanceof FirmwareUpdateError && error.restarted) bridgeLoaded = false;
       if (bridgeLoaded && jtag && !flashWriteAttempted) {
-        try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
+        try {
+          await jtag.restartFromFlash();
+          bridgeLoaded = false;
+          appendDiagnostic("bridge.restart.after-prewrite-error", "complete");
+        } catch (restartError) {
+          appendDiagnostic("bridge.restart.after-prewrite-error.failed", errorMessage(restartError, "unknown restart error"));
+        }
       }
-      setUsbError(error instanceof Error ? error.message : "Safe firmware update failed.");
+      const message = errorMessage(error, "Safe firmware update failed.");
+      appendDiagnostic(
+        "firmware.update.error",
+        `stage=${lastFirmwareStage.current ?? "bridge"} overallPercent=${firmwareProgressValue.current.toFixed(1)} writeAttempted=${flashWriteAttempted} rollbackVerified=${error instanceof FirmwareUpdateError ? error.rollbackVerified : false} restarted=${error instanceof FirmwareUpdateError ? error.restarted : false} error=${message}`,
+      );
+      setUsbError(message);
     } finally {
       // Never restart an incompletely written flash here. The transaction only
       // restarts after update verification or verified rollback.
@@ -835,8 +963,10 @@ export default function ShapeshifterStudio() {
     const filename = `shapeshifter-full-flash-read-only-${created}.bin`;
     setUsbError("");
     setJtagBusy(true);
-    setFirmwareProgress(0);
+    updateFirmwareProgress(0);
     setFullFlashBackupName("");
+    lastFirmwareStage.current = null;
+    appendDiagnostic("flash.backup.readonly.start");
     let device: any = null;
     let interfaceNumber = 0;
     let jtag: UsbBlasterJtag | null = null;
@@ -845,7 +975,7 @@ export default function ShapeshifterStudio() {
       const session = await openJtagSession();
       ({ device, interfaceNumber, jtag } = session);
       setStatus("Verifying the Shapeshifter and loading the volatile read-only flash service …");
-      const flashSize = await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      const flashSize = await loadFullFlashBridge(jtag, (fraction) => updateFirmwareProgress(fraction * 10));
       bridgeLoaded = true;
       await createVerifiedFullFlashBackup(
         jtag,
@@ -856,15 +986,24 @@ export default function ShapeshifterStudio() {
       setStatus("Both complete flash reads match and the safety copy was downloaded. Restarting …");
       await jtag.restartFromFlash();
       bridgeLoaded = false;
-      setFirmwareProgress(100);
+      updateFirmwareProgress(100);
       setFullFlashBackupName(filename);
       setJtagId("");
       setStatus(`Safety copy complete: two matching reads saved as ${filename}; nothing was changed.`);
+      appendDiagnostic("flash.backup.readonly.success", `file=${filename} bytes=${flashSize}`);
     } catch (error) {
       if (bridgeLoaded && jtag) {
-        try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
+        try {
+          await jtag.restartFromFlash();
+          bridgeLoaded = false;
+          appendDiagnostic("bridge.restart.after-backup-error", "complete");
+        } catch (restartError) {
+          appendDiagnostic("bridge.restart.after-backup-error.failed", errorMessage(restartError, "unknown restart error"));
+        }
       }
-      setUsbError(error instanceof Error ? error.message : "Read-only full-flash backup failed.");
+      const message = errorMessage(error, "Read-only full-flash backup failed.");
+      appendDiagnostic("flash.backup.readonly.error", `stage=${lastFirmwareStage.current ?? "bridge"} overallPercent=${firmwareProgressValue.current.toFixed(1)} error=${message}`);
+      setUsbError(message);
     } finally {
       try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
       try { if (device?.opened) await device.close(); } catch {}
@@ -877,7 +1016,9 @@ export default function ShapeshifterStudio() {
     setUsbError("");
     setFirmwareDryRunResult("");
     setJtagBusy(true);
-    setFirmwareProgress(0);
+    updateFirmwareProgress(0);
+    lastFirmwareStage.current = null;
+    appendDiagnostic("firmware.dryrun.start", `file=${officialFirmware.filename}`);
     let device: any = null;
     let interfaceNumber = 0;
     let jtag: UsbBlasterJtag | null = null;
@@ -886,24 +1027,33 @@ export default function ShapeshifterStudio() {
       const session = await openJtagSession();
       ({ device, interfaceNumber, jtag } = session);
       setStatus("Loading the volatile read-only flash service …");
-      const flashSize = await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      const flashSize = await loadFullFlashBridge(jtag, (fraction) => updateFirmwareProgress(fraction * 10));
       bridgeLoaded = true;
       setStatus("Checking the installed firmware without changing anything …");
-      const current = await jtag.readFlash(0, flashSize, (fraction) => setFirmwareProgress(10 + fraction * 80));
+      const current = await jtag.readFlash(0, flashSize, (fraction) => updateFirmwareProgress(10 + fraction * 80));
       const { changedSectors } = createJicProgrammingTarget(officialFirmware, current);
       setStatus("Dry run complete. Restarting the Shapeshifter from the unchanged flash …");
       await jtag.restartFromFlash();
       bridgeLoaded = false;
-      setFirmwareProgress(100);
+      updateFirmwareProgress(100);
       setFirmwareDryRunResult(changedSectors.length
         ? `${changedSectors.length} of 32 sectors differ. Installation will replace the complete 2 MB firmware memory, including custom wavetables and other stored data.`
         : "This firmware is already installed. No update is needed.");
       setStatus("Firmware dry run complete — no flash write was performed.");
+      appendDiagnostic("firmware.dryrun.success", `changedSectors=${changedSectors.length}/32 flashBytes=${flashSize}`);
     } catch (error) {
       if (bridgeLoaded && jtag) {
-        try { await jtag.restartFromFlash(); bridgeLoaded = false; } catch {}
+        try {
+          await jtag.restartFromFlash();
+          bridgeLoaded = false;
+          appendDiagnostic("bridge.restart.after-dryrun-error", "complete");
+        } catch (restartError) {
+          appendDiagnostic("bridge.restart.after-dryrun-error.failed", errorMessage(restartError, "unknown restart error"));
+        }
       }
-      setUsbError(error instanceof Error ? error.message : "Firmware dry run failed.");
+      const message = errorMessage(error, "Firmware dry run failed.");
+      appendDiagnostic("firmware.dryrun.error", `overallPercent=${firmwareProgressValue.current.toFixed(1)} error=${message}`);
+      setUsbError(message);
     } finally {
       try { if (device?.opened) await device.releaseInterface(interfaceNumber); } catch {}
       try { if (device?.opened) await device.close(); } catch {}
@@ -916,7 +1066,9 @@ export default function ShapeshifterStudio() {
     setUsbError("");
     setJtagBusy(true);
     setFullRecoveryConfirmation("");
-    setFirmwareProgress(0);
+    updateFirmwareProgress(0);
+    lastFirmwareStage.current = null;
+    appendDiagnostic("recovery.start", `file=${fullRecoveryBackup.filename} bytes=${fullRecoveryBackup.bytes.length}`);
     let device: any = null;
     let interfaceNumber = 0;
     let jtag: UsbBlasterJtag | null = null;
@@ -924,17 +1076,20 @@ export default function ShapeshifterStudio() {
       const session = await openJtagSession();
       ({ device, interfaceNumber, jtag } = session);
       setStatus("Verifying the Shapeshifter and loading the volatile recovery service …");
-      const flashSize = await loadFullFlashBridge(jtag, (fraction) => setFirmwareProgress(fraction * 10));
+      const flashSize = await loadFullFlashBridge(jtag, (fraction) => updateFirmwareProgress(fraction * 10));
       if (fullRecoveryBackup.bytes.length !== flashSize) {
         throw new Error("This safety copy belongs to a different flash size. Nothing was changed.");
       }
       await restoreFullFlashBackup(jtag, fullRecoveryBackup.bytes, reportFirmwareProgress);
-      setFirmwareProgress(100);
+      updateFirmwareProgress(100);
       setJtagId("");
       setFullRecoveryBackup(null);
       setStatus("Recovery complete: the complete flash matches the safety copy, and the Shapeshifter restarted.");
+      appendDiagnostic("recovery.success", `verifiedBytes=${flashSize}; restart complete`);
     } catch (error) {
-      setUsbError(error instanceof Error ? error.message : "Full-flash recovery failed.");
+      const message = errorMessage(error, "Full-flash recovery failed.");
+      appendDiagnostic("recovery.error", `stage=${lastFirmwareStage.current ?? "bridge"} overallPercent=${firmwareProgressValue.current.toFixed(1)} error=${message}`);
+      setUsbError(message);
     } finally {
       // A failed recovery is deliberately left in the volatile bridge so the
       // user can reconnect and retry without booting an unverified flash.
@@ -1096,12 +1251,21 @@ export default function ShapeshifterStudio() {
               {firmwareProgress > 0 && firmwareProgress < 100 && <div className="firmware-progress" aria-label={`Firmware operation ${Math.round(firmwareProgress)} percent`}><i style={{ width: `${firmwareProgress}%` }} /></div>}
             </div>
           </details>}
+          <details className="emergency-tools diagnostic-tools">
+            <summary>Diagnostic log</summary>
+            <div className="emergency-body">
+              <p>The update log is stored only in this browser and survives a page reload. Download the text file to send it with a support request. Flash contents, file contents, audio, and the USB serial number are never included.</p>
+              <div className="full-flash-file"><b>{diagnosticEntries.length} local log entries</b><small>{diagnosticEntries.at(-1)?.event ?? "No events recorded"}</small></div>
+              <button className="wide diagnostic-download-button" type="button" disabled={diagnosticEntries.length === 0} onClick={downloadDiagnosticLog}>Download diagnostic log</button>
+              <button className="wide secondary" type="button" disabled={diagnosticEntries.length === 0 || jtagBusy} onClick={clearDiagnosticLog}>Clear diagnostic log</button>
+            </div>
+          </details>
         </div>
         <div className="status-line" aria-live="polite"><span />{status}</div>
         </section>
       </section>
 
-      <footer><span>WAVEPORT 0.3.0 / EXPERIMENTAL HARDWARE TOOL</span><span>No files are uploaded.</span></footer>
+      <footer><span>WAVEPORT {APP_VERSION} / EXPERIMENTAL HARDWARE TOOL</span><span>No files are uploaded.</span></footer>
     </main>
   );
 }
