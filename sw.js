@@ -1,8 +1,8 @@
-const CACHE_NAME = "waveport-28d9c1cd1bf1";
+const CACHE_NAME = "waveport-8b337a3113f9";
 const PRECACHE_URLS = [
   "./",
   "./assets/index-BBVywt3X.css",
-  "./assets/index-xQiVM88E.js",
+  "./assets/index-CjYhsZbo.js",
   "./bridges/spiOverJtag_ep4ce2217.rbf",
   "./favicon.svg",
   "./icon-192.png",
